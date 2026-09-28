@@ -15,6 +15,7 @@ from agent_videonote.asr.runtime_config import (
     load_asr_runtime_config,
 )
 from agent_videonote.core.config import RuntimeConfig, load_runtime_config
+from agent_videonote.core.errors import ConfigurationError
 from agent_videonote.media.ffmpeg import FFmpegBackend
 from agent_videonote.storage.json_store import JsonTaskStore
 from agent_videonote.tasks.service import TaskService
@@ -32,6 +33,7 @@ class RuntimeContainer:
     contexts: CourseContextRepository
     application: ApplicationService
     visuals: VisualService
+    startup_warnings: tuple[str, ...] = ()
 
 
 def build_runtime(
@@ -39,6 +41,8 @@ def build_runtime(
     profile: AsrProfile,
     provider_specs: tuple[ProviderSpec, ...] = (),
     config: RuntimeConfig | None = None,
+    startup_warnings: tuple[str, ...] = (),
+    tolerate_provider_errors: bool = False,
 ) -> RuntimeContainer:
     runtime_config = config or load_runtime_config()
     store = JsonTaskStore(runtime_config.paths.tasks)
@@ -49,7 +53,12 @@ def build_runtime(
     cleanup_registry = build_default_cleanup_registry()
     contexts = CourseContextRepository(runtime_config.paths.context / "courses")
 
-    register_provider_specs(asr_registry, provider_specs)
+    provider_warnings = register_provider_specs(
+        asr_registry,
+        provider_specs,
+        tolerate_errors=tolerate_provider_errors,
+    )
+    all_startup_warnings = tuple(startup_warnings) + tuple(provider_warnings)
 
     application = ApplicationService(
         config=runtime_config,
@@ -59,6 +68,7 @@ def build_runtime(
         asr_registry=asr_registry,
         asr_profile=profile,
         contexts=contexts,
+        startup_warnings=all_startup_warnings,
     )
     visuals = VisualService(tasks, cleanup_registry)
 
@@ -69,6 +79,7 @@ def build_runtime(
         contexts=contexts,
         application=application,
         visuals=visuals,
+        startup_warnings=all_startup_warnings,
     )
 
 
@@ -84,8 +95,15 @@ def build_runtime_from_environment(
         else runtime_config.paths.context / "asr-runtime.json"
     )
 
+    startup_warnings: list[str] = []
     if config_path.is_file():
-        asr_runtime = load_asr_runtime_config(config_path)
+        try:
+            asr_runtime = load_asr_runtime_config(config_path)
+        except ConfigurationError as exc:
+            startup_warnings.append(
+                f"ASR runtime config disabled: {exc}"
+            )
+            asr_runtime = disabled_asr_runtime_config()
     else:
         asr_runtime = disabled_asr_runtime_config()
 
@@ -93,4 +111,6 @@ def build_runtime_from_environment(
         profile=asr_runtime.profile,
         provider_specs=asr_runtime.providers,
         config=runtime_config,
+        startup_warnings=tuple(startup_warnings),
+        tolerate_provider_errors=True,
     )
