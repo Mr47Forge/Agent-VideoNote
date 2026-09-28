@@ -4,7 +4,11 @@ from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from typing import Any
 
+from agent_videonote.core.errors import StateSchemaError
 from agent_videonote.core.types import SourceIdentity
+
+
+CURRENT_TASK_SCHEMA_VERSION = 1
 
 
 def utc_now() -> str:
@@ -35,7 +39,7 @@ class TaskState:
     def new(cls, task_id: str, source: SourceIdentity, initial_stage: str) -> "TaskState":
         now = utc_now()
         return cls(
-            schema_version=1,
+            schema_version=CURRENT_TASK_SCHEMA_VERSION,
             task_id=task_id,
             source=source,
             current_stage=initial_stage,
@@ -59,8 +63,16 @@ class TaskState:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "TaskState":
+        version = int(data.get("schema_version", 0))
+        if version != CURRENT_TASK_SCHEMA_VERSION:
+            raise StateSchemaError(
+                "unsupported task state schema: "
+                f"{version}; expected {CURRENT_TASK_SCHEMA_VERSION}. "
+                "Run an explicit state migration before resuming this task."
+            )
+
         return cls(
-            schema_version=int(data["schema_version"]),
+            schema_version=version,
             task_id=str(data["task_id"]),
             source=SourceIdentity(**data["source"]),
             current_stage=str(data["current_stage"]),
