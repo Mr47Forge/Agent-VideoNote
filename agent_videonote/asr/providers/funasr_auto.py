@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib.util
 import wave
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -140,6 +141,17 @@ class FunAsrAutoProvider:
                 "hub": self.config.hub,
             },
         )
+
+    def preflight(self) -> tuple[str, ...]:
+        warnings: list[str] = []
+        if importlib.util.find_spec("funasr") is None:
+            warnings.append("Python package 'funasr' is not installed")
+        if (
+            self.config.device.lower().startswith("cuda")
+            and importlib.util.find_spec("torch") is None
+        ):
+            warnings.append("CUDA FunASR provider requires Python package 'torch'")
+        return tuple(warnings)
 
     def close(self) -> None:
         self._model = None
