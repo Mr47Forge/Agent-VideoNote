@@ -18,6 +18,7 @@ from agent_videonote.workflow.stages import WorkflowStage
 
 
 _MAX_TRANSCRIPT_SEGMENTS_PER_READ = 200
+_MAX_REVIEW_SECONDS = 180.0
 
 
 class TranscriptOperationsMixin:
@@ -274,6 +275,11 @@ class TranscriptOperationsMixin:
             raise ConfigurationError("review ASR role is disabled")
 
         window = TimeRange(start=start, end=end)
+        if window.duration > _MAX_REVIEW_SECONDS:
+            raise ValueError(
+                f"review window cannot exceed {_MAX_REVIEW_SECONDS:.0f} seconds"
+            )
+
         ctx = self._resolve_context(context=context, course_id=course_id)
         required = {AsrCapability.SHORT_AUDIO} | _context_capabilities(ctx)
         provider = self.asr_registry.get(provider_id, required)
