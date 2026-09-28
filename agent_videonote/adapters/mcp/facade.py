@@ -21,12 +21,14 @@ class McpToolFacade:
         priority: str = "balanced",
         integrated_only: bool = False,
         limit: int = 5,
+        detail: str = "compact",
     ) -> dict[str, Any]:
         return self.application.list_asr_models(
             role=role,
             priority=priority,
             integrated_only=integrated_only,
             limit=limit,
+            detail=detail,
         )
 
     def prepare(self, source: str) -> dict[str, Any]:
