@@ -29,5 +29,11 @@ class ConcurrencyGuardProvider:
         with self._semaphore:
             return self._provider.transcribe(request)
 
+    def preflight(self) -> tuple[str, ...]:
+        check = getattr(self._provider, "preflight", None)
+        if callable(check):
+            return tuple(check())
+        return ()
+
     def close(self) -> None:
         self._provider.close()
