@@ -16,6 +16,16 @@ class TaskOperationsMixin:
     def prepare(self, source: str | Path) -> dict[str, Any]:
         state = self.tasks.create_or_resume(source)
         existing = state.artifacts.get("media_info")
+        orphan_media = self.task_dir(state.task_id) / "source" / "media.json"
+        if not existing and orphan_media.is_file():
+            media_payload = read_json(orphan_media)
+            state = self.tasks.register_artifact(
+                state.task_id,
+                "media_info",
+                Artifact(kind="media_info", path=str(orphan_media)),
+            )
+            existing = state.artifacts.get("media_info")
+
         if existing and Path(existing["path"]).is_file():
             media_payload = read_json(existing["path"])
             if state.current_stage == WorkflowStage.INPUT.value:
