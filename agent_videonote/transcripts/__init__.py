@@ -1,0 +1,1 @@
+"""Normalized transcript domain."""
