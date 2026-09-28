@@ -7,13 +7,32 @@ from agent_videonote.asr.request import RecognitionContext
 
 
 class McpToolFacade:
-    """Protocol-neutral tool surface to be bound to an MCP SDK later."""
+    """Protocol-neutral tool surface to be bound to an MCP SDK."""
 
     def __init__(self, application: ApplicationService):
         self.application = application
 
     def prepare(self, source: str) -> dict[str, Any]:
         return self.application.prepare(source)
+
+    def set_course_context(
+        self,
+        course_id: str,
+        title_terms: list[str] | None = None,
+        glossary_terms: list[str] | None = None,
+        free_text: str | None = None,
+        language: str | None = None,
+    ) -> dict[str, Any]:
+        return self.application.set_course_context(
+            course_id=course_id,
+            title_terms=title_terms or [],
+            glossary_terms=glossary_terms or [],
+            free_text=free_text,
+            language=language,
+        )
+
+    def get_course_context(self, course_id: str) -> dict[str, Any]:
+        return self.application.get_course_context(course_id)
 
     def ingest_srt(
         self,
@@ -26,17 +45,29 @@ class McpToolFacade:
     def transcribe(
         self,
         task_id: str,
+        course_id: str | None = None,
         language: str | None = None,
         hotwords: list[str] | None = None,
         context_text: str | None = None,
     ) -> dict[str, Any]:
         return self.application.transcribe(
             task_id,
-            context=RecognitionContext(
-                language=language,
-                hotwords=tuple(hotwords or []),
-                free_text=context_text,
-            ),
+            course_id=course_id,
+            context=_explicit_context(language, hotwords, context_text),
+        )
+
+    def get_transcript(
+        self,
+        task_id: str,
+        start_segment: int = 1,
+        end_segment: int = 80,
+        include_words: bool = False,
+    ) -> dict[str, Any]:
+        return self.application.get_transcript(
+            task_id,
+            start_segment=start_segment,
+            end_segment=end_segment,
+            include_words=include_words,
         )
 
     def review(
@@ -45,6 +76,7 @@ class McpToolFacade:
         start: float,
         end: float,
         speed: float = 1.0,
+        course_id: str | None = None,
         language: str | None = None,
         hotwords: list[str] | None = None,
         context_text: str | None = None,
@@ -54,11 +86,8 @@ class McpToolFacade:
             start=start,
             end=end,
             speed=speed,
-            context=RecognitionContext(
-                language=language,
-                hotwords=tuple(hotwords or []),
-                free_text=context_text,
-            ),
+            course_id=course_id,
+            context=_explicit_context(language, hotwords, context_text),
         )
 
     def task(self, task_id: str) -> dict[str, Any]:
@@ -76,3 +105,17 @@ class McpToolFacade:
             "orphan_images": list(report.orphan_images),
             "unexpected_entries": list(report.unexpected_entries),
         }
+
+
+def _explicit_context(
+    language: str | None,
+    hotwords: list[str] | None,
+    context_text: str | None,
+) -> RecognitionContext | None:
+    if not language and not hotwords and not context_text:
+        return None
+    return RecognitionContext(
+        language=language,
+        hotwords=tuple(hotwords or []),
+        free_text=context_text,
+    )
