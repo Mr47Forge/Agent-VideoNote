@@ -136,3 +136,47 @@ def test_delivery_recovers_done_stage_not_yet_marked_complete(tmp_path: Path) ->
     recovered = app.tasks.get(task_id)
     assert recovered.current_stage == "done"
     assert "done" in recovered.completed_stages
+
+
+def test_prepare_adopts_orphan_media_file_without_reprobing(tmp_path: Path) -> None:
+    source = tmp_path / "video.mp4"
+    source.write_bytes(b"video")
+    app = _app(tmp_path)
+
+    state = app.tasks.create_or_resume(source)
+    orphan = write_json_atomic(
+        app.task_dir(state.task_id) / "source" / "media.json",
+        {"path": str(source), "duration": 10.0, "format_name": "fake", "streams": []},
+    )
+
+    result = app.prepare(source)
+
+    assert result["task"]["current_stage"] == "transcript"
+    recovered = app.tasks.get(state.task_id)
+    assert recovered.artifacts["media_info"]["path"] == str(orphan)
+
+
+def test_transcribe_adopts_orphan_transcript_without_provider_rerun(tmp_path: Path) -> None:
+    source = tmp_path / "video.mp4"
+    source.write_bytes(b"video")
+    app = _app(tmp_path)
+    task_id = app.prepare(source)["task"]["task_id"]
+
+    transcript = Transcript(
+        text="孤儿转写。",
+        segments=(TranscriptSegment(start=0.0, end=1.0, text="孤儿转写。"),),
+        source_id="test:orphan",
+        language="zh",
+    )
+    orphan = write_json_atomic(
+        app.task_dir(task_id) / "transcript" / "transcript.json",
+        transcript.to_dict(),
+    )
+
+    summary = app.transcribe(task_id)
+
+    assert summary["source_id"] == "test:orphan"
+    recovered = app.tasks.get(task_id)
+    assert recovered.current_stage == "visual"
+    assert recovered.artifacts["transcript"]["path"] == str(orphan)
+
