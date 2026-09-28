@@ -20,16 +20,8 @@ def create_server():
 
     @mcp.tool()
     def health() -> dict[str, Any]:
-        """返回运行目录、已注册 ASR Provider 与能力；不加载模型。"""
-        return {
-            "name": "Agent-VideoNote",
-            "data_dir": str(container.config.paths.root),
-            "tasks_dir": str(container.config.paths.tasks),
-            "models_dir": str(container.config.paths.models),
-            "providers": container.asr_registry.list_capabilities(),
-            "ffmpeg": container.config.ffmpeg_bin,
-            "ffprobe": container.config.ffprobe_bin,
-        }
+        """轻量运行体检：检查媒体工具和 Provider 配置，不加载模型。"""
+        return facade.health()
 
     @mcp.tool()
     def prepare(source: str) -> dict[str, Any]:
