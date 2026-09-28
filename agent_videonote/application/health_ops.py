@@ -8,6 +8,7 @@ from typing import Any
 class HealthOperationsMixin:
     def health(self) -> dict[str, Any]:
         providers = self.asr_registry.list_capabilities()
+        provider_preflight = self.asr_registry.preflight()
 
         roles: dict[str, dict[str, Any]] = {}
         role_warnings: list[str] = []
@@ -29,6 +30,9 @@ class HealthOperationsMixin:
 
         warnings = list(getattr(self, "startup_warnings", ()))
         warnings.extend(role_warnings)
+        for provider_id, items in provider_preflight.items():
+            for item in items:
+                warnings.append(f"ASR provider '{provider_id}': {item}")
         if ffmpeg is None:
             warnings.append(f"ffmpeg not found: {self.config.ffmpeg_bin}")
         if ffprobe is None:
@@ -46,6 +50,7 @@ class HealthOperationsMixin:
             "asr": {
                 "roles": roles,
                 "providers": providers,
+                "preflight": provider_preflight,
             },
             "warnings": warnings,
             "models_loaded": False,
