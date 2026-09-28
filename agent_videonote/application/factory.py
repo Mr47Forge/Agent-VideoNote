@@ -9,6 +9,8 @@ from agent_videonote.core.config import RuntimeConfig, load_runtime_config
 from agent_videonote.media.ffmpeg import FFmpegBackend
 from agent_videonote.storage.json_store import JsonTaskStore
 from agent_videonote.tasks.service import TaskService
+from agent_videonote.visuals.cleanup.registry import CleanupRegistry
+from agent_videonote.visuals.service import VisualService
 from agent_videonote.workflow.engine import WorkflowEngine
 
 
@@ -16,7 +18,9 @@ from agent_videonote.workflow.engine import WorkflowEngine
 class RuntimeContainer:
     config: RuntimeConfig
     asr_registry: ProviderRegistry
+    cleanup_registry: CleanupRegistry
     application: ApplicationService
+    visuals: VisualService
 
 
 def build_runtime(
@@ -29,18 +33,23 @@ def build_runtime(
     tasks = TaskService(store)
     workflow = WorkflowEngine(store)
     media = FFmpegBackend(runtime_config)
-    registry = ProviderRegistry()
+    asr_registry = ProviderRegistry()
+    cleanup_registry = CleanupRegistry()
 
     application = ApplicationService(
         config=runtime_config,
         tasks=tasks,
         workflow=workflow,
         media=media,
-        asr_registry=registry,
+        asr_registry=asr_registry,
         asr_profile=profile,
     )
+    visuals = VisualService(tasks, cleanup_registry)
+
     return RuntimeContainer(
         config=runtime_config,
-        asr_registry=registry,
+        asr_registry=asr_registry,
+        cleanup_registry=cleanup_registry,
         application=application,
+        visuals=visuals,
     )
