@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
 
 from agent_videonote.tasks.service import TaskService
 from agent_videonote.visuals.cleanup.registry import CleanupRegistry
@@ -24,12 +23,11 @@ class VisualService:
         strategy: VisualDiscoveryStrategy,
     ) -> tuple[VisualState, ...]:
         states = strategy.discover(source, work_dir)
-        state = self.tasks.get(task_id)
-        state.add_event(
+        self.tasks.record_event(
+            task_id,
             "visual.discovery",
             {"strategy": strategy.strategy_id, "states": len(states)},
         )
-        self.tasks.store.save(state)
         return states
 
     def clean(self, task_id: str, request: CleanupRequest) -> CleanupResult:
