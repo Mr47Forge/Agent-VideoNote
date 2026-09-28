@@ -73,4 +73,6 @@ class McpToolFacade:
             "ok": report.ok,
             "problems": list(report.problems),
             "image_references": list(report.image_references),
+            "orphan_images": list(report.orphan_images),
+            "unexpected_entries": list(report.unexpected_entries),
         }
