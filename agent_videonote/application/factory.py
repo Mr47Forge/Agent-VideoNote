@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from agent_videonote.application.service import ApplicationService
+from agent_videonote.asr.context.repository import CourseContextRepository
 from agent_videonote.asr.profiles.models import AsrProfile
 from agent_videonote.asr.providers.factory import register_provider_specs
 from agent_videonote.asr.providers.registry import ProviderRegistry
@@ -27,6 +28,7 @@ class RuntimeContainer:
     config: RuntimeConfig
     asr_registry: ProviderRegistry
     cleanup_registry: CleanupRegistry
+    contexts: CourseContextRepository
     application: ApplicationService
     visuals: VisualService
 
@@ -44,6 +46,7 @@ def build_runtime(
     media = FFmpegBackend(runtime_config)
     asr_registry = ProviderRegistry()
     cleanup_registry = CleanupRegistry()
+    contexts = CourseContextRepository(runtime_config.paths.context / "courses")
 
     register_provider_specs(asr_registry, provider_specs)
 
@@ -54,6 +57,7 @@ def build_runtime(
         media=media,
         asr_registry=asr_registry,
         asr_profile=profile,
+        contexts=contexts,
     )
     visuals = VisualService(tasks, cleanup_registry)
 
@@ -61,6 +65,7 @@ def build_runtime(
         config=runtime_config,
         asr_registry=asr_registry,
         cleanup_registry=cleanup_registry,
+        contexts=contexts,
         application=application,
         visuals=visuals,
     )
