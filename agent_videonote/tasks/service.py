@@ -19,8 +19,13 @@ class TaskService:
         task_id = task_id_for_source(source)
 
         if self._store.exists(task_id):
-            state = self._store.load(task_id)
-            if state.source.path != source.path or state.source.mtime_ns != source.mtime_ns:
+            def update_source(state: TaskState) -> None:
+                if (
+                    state.source.path == source.path
+                    and state.source.mtime_ns == source.mtime_ns
+                ):
+                    return
+
                 previous_path = state.source.path
                 state.source = source
                 state.add_event(
@@ -31,8 +36,8 @@ class TaskService:
                         "fingerprint": source.fingerprint,
                     },
                 )
-                return self._store.save(state)
-            return state
+
+            return self._store.mutate(task_id, update_source)
 
         state = TaskState.new(task_id, source, WorkflowStage.INPUT.value)
         return self._store.create(state)
@@ -41,17 +46,22 @@ class TaskService:
         return self._store.load(task_id)
 
     def register_artifact(self, task_id: str, name: str, artifact: Artifact) -> TaskState:
-        state = self._store.load(task_id)
-        state.artifacts[name] = artifact.to_dict()
-        state.add_event("artifact.registered", {"name": name, "kind": artifact.kind})
-        return self._store.save(state)
+        def change(state: TaskState) -> None:
+            state.artifacts[name] = artifact.to_dict()
+            state.add_event(
+                "artifact.registered",
+                {"name": name, "kind": artifact.kind},
+            )
+
+        return self._store.mutate(task_id, change)
 
     def add_unresolved(self, task_id: str, category: str, detail: dict[str, Any]) -> TaskState:
-        state = self._store.load(task_id)
-        item = {"category": category, **detail}
-        state.unresolved.append(item)
-        state.add_event("unresolved.added", {"category": category})
-        return self._store.save(state)
+        def change(state: TaskState) -> None:
+            item = {"category": category, **detail}
+            state.unresolved.append(item)
+            state.add_event("unresolved.added", {"category": category})
+
+        return self._store.mutate(task_id, change)
 
     def record_event(
         self,
@@ -59,6 +69,7 @@ class TaskService:
         event_type: str,
         detail: dict[str, Any] | None = None,
     ) -> TaskState:
-        state = self._store.load(task_id)
-        state.add_event(event_type, detail or {})
-        return self._store.save(state)
+        def change(state: TaskState) -> None:
+            state.add_event(event_type, detail or {})
+
+        return self._store.mutate(task_id, change)
