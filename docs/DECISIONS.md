@@ -48,4 +48,23 @@ GPT 图像 AI / 付费生成式修图不进入默认工作流。
 
 状态：已决定。
 
-FFmpeg、FunASR、Qwen ASR、PyTorch、MCP SDK 等若采用，直接针对其官方/上游项目集成并单独审核许可证，不通过 VideoNote-MCP 间接继承。
+FFmpeg、ASR 框架/模型、PyTorch、MCP SDK 等若采用，直接针对其官方/上游项目集成并单独审核许可证，不通过 VideoNote-MCP 间接继承。
+
+## ADR-008：ASR 角色固定，具体实现可替换
+
+状态：已决定。
+
+系统层只定义 `primary`、`review`、`context` 等能力角色，不把具体模型名写入工作流、任务状态或 MCP 协议。
+
+具体实现通过 Provider 注册并声明能力，由 profile 配置角色映射。
+
+历史使用过的 Fun-ASR-Nano-2512、Qwen3-ASR-1.7B 只作为候选 Provider 的实战参考，不构成架构依赖。
+
+目标：
+
+- 换模型不改工作流；
+- 换模型不改任务协议；
+- 换模型不改 MCP 工具名称；
+- 同一 Provider 可以承担多个角色；
+- 某角色可以关闭；
+- Provider 不支持某能力时显式失败，不偷偷降级。
