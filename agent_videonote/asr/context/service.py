@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 
-from agent_videonote.asr.types import RecognitionContext
+from agent_videonote.asr.request import RecognitionContext
 
 
 class ContextService:
