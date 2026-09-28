@@ -39,6 +39,14 @@ class ProviderRegistry:
             for key, provider in self._providers.items()
         }
 
+    def preflight(self) -> dict[str, list[str]]:
+        result: dict[str, list[str]] = {}
+        for provider_id, provider in self._providers.items():
+            check = getattr(provider, "preflight", None)
+            warnings = tuple(check()) if callable(check) else ()
+            result[provider_id] = list(warnings)
+        return result
+
     def close_all(self) -> None:
         for provider in self._providers.values():
             provider.close()
