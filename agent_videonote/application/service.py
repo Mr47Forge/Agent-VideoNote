@@ -53,7 +53,17 @@ class ApplicationService:
         state = self.tasks.create_or_resume(source)
         existing = state.artifacts.get("media_info")
         if existing and Path(existing["path"]).is_file():
-            return {"task": self._task_summary(state), "media": read_json(existing["path"])}
+            media_payload = read_json(existing["path"])
+            if state.current_stage == WorkflowStage.INPUT.value:
+                state = self.workflow.complete_current(
+                    state.task_id,
+                    evidence={
+                        "source": state.source.path,
+                        "media_info": str(existing["path"]),
+                        "recovered": True,
+                    },
+                )
+            return {"task": self._task_summary(state), "media": media_payload}
 
         info = self.media.probe(state.source.path)
         media_path = write_json_atomic(
@@ -120,7 +130,18 @@ class ApplicationService:
         state = self.tasks.get(task_id)
         existing = state.artifacts.get("transcript")
         if existing and Path(existing["path"]).is_file():
-            return self._transcript_summary(task_id, Path(existing["path"]))
+            path = Path(existing["path"])
+            summary = self._transcript_summary(task_id, path)
+            if state.current_stage == WorkflowStage.TRANSCRIPT.value:
+                self.workflow.complete_current(
+                    task_id,
+                    evidence={
+                        "transcript": str(path),
+                        "source_id": summary.get("source_id"),
+                        "recovered": True,
+                    },
+                )
+            return summary
 
         if state.current_stage != WorkflowStage.TRANSCRIPT.value:
             raise InvalidTransitionError("task is not in transcript stage")
@@ -156,7 +177,18 @@ class ApplicationService:
         state = self.tasks.get(task_id)
         existing = state.artifacts.get("transcript")
         if existing and Path(existing["path"]).is_file():
-            return self._transcript_summary(task_id, Path(existing["path"]))
+            path = Path(existing["path"])
+            summary = self._transcript_summary(task_id, path)
+            if state.current_stage == WorkflowStage.TRANSCRIPT.value:
+                self.workflow.complete_current(
+                    task_id,
+                    evidence={
+                        "transcript": str(path),
+                        "source_id": summary.get("source_id"),
+                        "recovered": True,
+                    },
+                )
+            return summary
 
         if state.current_stage != WorkflowStage.TRANSCRIPT.value:
             raise InvalidTransitionError("task is not in transcript stage")
@@ -340,6 +372,15 @@ class ApplicationService:
         deliverables_dir: str | Path,
     ) -> DeliveryReport:
         state = self.tasks.get(task_id)
+        if state.current_stage == WorkflowStage.DONE.value:
+            report = validate_delivery(deliverables_dir)
+            if report.ok and WorkflowStage.DONE.value not in state.completed_stages:
+                self.workflow.mark_done(
+                    task_id,
+                    evidence={"validated": True, "recovered": True},
+                )
+            return report
+
         if state.current_stage != WorkflowStage.DELIVERY.value:
             raise InvalidTransitionError("task is not in delivery stage")
 
