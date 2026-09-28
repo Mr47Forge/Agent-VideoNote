@@ -24,9 +24,13 @@ class AsrRuntimeConfig:
 
 
 def load_asr_runtime_config(path: str | Path) -> AsrRuntimeConfig:
-    source = Path(path).expanduser().resolve(strict=True)
-    with source.open("r", encoding="utf-8") as handle:
-        data = json.load(handle)
+    try:
+        source = Path(path).expanduser().resolve(strict=True)
+        with source.open("r", encoding="utf-8") as handle:
+            data = json.load(handle)
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ConfigurationError(f"cannot load ASR runtime config: {exc}") from exc
+
     if not isinstance(data, dict):
         raise ConfigurationError("ASR runtime config root must be an object")
 
@@ -44,7 +48,12 @@ def load_asr_runtime_config(path: str | Path) -> AsrRuntimeConfig:
         provider_id = str(item.get("id") or "").strip()
         driver = str(item.get("driver") or "").strip()
         options = item.get("options", {})
-        max_concurrency = int(item.get("max_concurrency", 1))
+        try:
+            max_concurrency = int(item.get("max_concurrency", 1))
+        except (TypeError, ValueError) as exc:
+            raise ConfigurationError(
+                f"provider max_concurrency must be an integer: {provider_id or '<unknown>'}"
+            ) from exc
         if max_concurrency < 1:
             raise ConfigurationError(
                 f"provider max_concurrency must be >= 1: {provider_id or '<unknown>'}"
