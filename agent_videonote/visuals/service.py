@@ -18,11 +18,11 @@ class VisualService:
         self,
         task_id: str,
         *,
-        source: str | Path,
         work_dir: str | Path,
         strategy: VisualDiscoveryStrategy,
     ) -> tuple[VisualState, ...]:
-        states = strategy.discover(source, work_dir)
+        state = self.tasks.get(task_id)
+        states = strategy.discover(state.source.path, work_dir)
         self.tasks.record_event(
             task_id,
             "visual.discovery",
@@ -31,6 +31,10 @@ class VisualService:
         return states
 
     def clean(self, task_id: str, request: CleanupRequest) -> CleanupResult:
+        state = self.tasks.get(task_id)
+        if Path(request.source_video).resolve() != Path(state.source.path).resolve():
+            raise ValueError("cleanup request source does not match task source")
+
         result = self.cleanup.resolve(request)
         if not result.resolved:
             self.tasks.add_unresolved(
