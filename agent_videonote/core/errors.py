@@ -20,3 +20,7 @@ class InvalidTransitionError(AgentVideoNoteError):
 
 class ExternalToolError(AgentVideoNoteError):
     """An external executable failed or returned invalid output."""
+
+class StateSchemaError(AgentVideoNoteError):
+    """Persisted task state uses an unsupported schema version."""
+
