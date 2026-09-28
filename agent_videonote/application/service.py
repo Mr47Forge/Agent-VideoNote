@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from agent_videonote.application.delivery_ops import DeliveryOperationsMixin
+from agent_videonote.application.health_ops import HealthOperationsMixin
 from agent_videonote.application.task_ops import TaskOperationsMixin
 from agent_videonote.application.transcript_ops import TranscriptOperationsMixin
 from agent_videonote.asr.context.repository import CourseContextRepository
@@ -13,6 +14,7 @@ from agent_videonote.workflow.engine import WorkflowEngine
 
 
 class ApplicationService(
+    HealthOperationsMixin,
     TaskOperationsMixin,
     TranscriptOperationsMixin,
     DeliveryOperationsMixin,
