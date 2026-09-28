@@ -51,6 +51,7 @@ class TaskOperationsMixin:
     def get_task(self, task_id: str) -> dict[str, Any]:
         return self._task_summary(self.tasks.get(task_id))
 
+    @staticmethod
     def _task_summary(state: Any) -> dict[str, Any]:
         return {
             "task_id": state.task_id,
