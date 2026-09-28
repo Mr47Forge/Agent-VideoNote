@@ -10,9 +10,9 @@ Agent-VideoNote/
 │  ├─ tasks/
 │  ├─ media/
 │  ├─ asr/
-│  │  ├─ primary/
-│  │  ├─ review/
-│  │  └─ context/
+│  │  ├─ providers/      # 具体识别实现，可插拔
+│  │  ├─ profiles/       # primary/review 等角色映射
+│  │  └─ context/        # 热词与课程上下文
 │  ├─ visuals/
 │  │  ├─ discovery/
 │  │  ├─ cleanup/
@@ -57,3 +57,4 @@ Agent-VideoNote-Data/
 - 临时实验如果值得复用，必须经过 MAINTENANCE 收编进正式模块和测试；否则随任务生命周期清理。
 - 模型目录不和源码混放。
 - 历史项目迁移数据不和正常运行数据混放。
+- 具体模型名只能出现在 Provider 实现、运行配置、许可证登记和历史基线中；不得成为 workflow、task state 或 MCP 协议的一部分。
