@@ -1,0 +1,29 @@
+{
+  "providers": [
+    {
+      "id": "primary-local",
+      "driver": "funasr_auto",
+      "options": {
+        "model": "REPLACE_WITH_MODEL_ID_OR_LOCAL_PATH",
+        "hub": "ms",
+        "device": "cuda:0",
+        "vad_model": "fsmn-vad",
+        "expect_timestamps": true
+      }
+    },
+    {
+      "id": "review-local",
+      "driver": "qwen_asr",
+      "options": {
+        "model": "REPLACE_WITH_MODEL_ID_OR_LOCAL_PATH",
+        "device_map": "cuda:0",
+        "dtype": "bfloat16",
+        "supports_long_audio": false
+      }
+    }
+  ],
+  "roles": {
+    "primary": "primary-local",
+    "review": "review-local"
+  }
+}
