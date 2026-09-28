@@ -3,7 +3,8 @@ from __future__ import annotations
 from typing import Protocol, runtime_checkable
 
 from agent_videonote.asr.capabilities import AsrCapability
-from agent_videonote.asr.types import Transcript, TranscriptionRequest
+from agent_videonote.asr.request import TranscriptionRequest
+from agent_videonote.transcripts.types import Transcript
 
 
 @runtime_checkable
