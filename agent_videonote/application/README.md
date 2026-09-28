@@ -1,7 +1,13 @@
 # application
 
-用例编排层。
+只负责用例编排，不实现底层算法。
 
-负责把多个独立模块组合成“准备任务、转写、复核、提取画面、交付检查”等用例。
+当前拆分：
 
-不实现 FFmpeg 命令、不加载模型、不直接操作 MCP 协议。
+- `task_ops.py`：任务准备 / 状态摘要
+- `transcript_ops.py`：字幕、主转写、局部复核、分段读取
+- `delivery_ops.py`：视觉阶段收口、交付校验
+- `health_ops.py`：不加载模型的启动体检
+- `service.py`：薄门面，只做依赖组合
+
+CI 会阻止业务逻辑重新塞回 `ApplicationService`。
