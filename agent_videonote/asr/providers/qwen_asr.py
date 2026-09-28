@@ -69,7 +69,7 @@ class QwenAsrProvider:
         results = model.transcribe(
             audio=str(request.audio_path),
             context=context_text,
-            language=request.context.language,
+            language=_qwen_language(request.context.language),
             return_time_stamps=bool(self.config.forced_aligner),
         )
         if not isinstance(results, list) or not results:
@@ -222,3 +222,52 @@ def _wav_duration(path: Path) -> float:
 
 def _is_number(value: Any) -> bool:
     return isinstance(value, (int, float))
+
+_QWEN_LANGUAGE_ALIASES = {
+    "zh": "Chinese",
+    "zh-cn": "Chinese",
+    "zh-tw": "Chinese",
+    "en": "English",
+    "yue": "Cantonese",
+    "ar": "Arabic",
+    "de": "German",
+    "fr": "French",
+    "es": "Spanish",
+    "pt": "Portuguese",
+    "id": "Indonesian",
+    "it": "Italian",
+    "ko": "Korean",
+    "ru": "Russian",
+    "th": "Thai",
+    "vi": "Vietnamese",
+    "ja": "Japanese",
+    "tr": "Turkish",
+    "hi": "Hindi",
+    "ms": "Malay",
+    "nl": "Dutch",
+    "sv": "Swedish",
+    "da": "Danish",
+    "fi": "Finnish",
+    "pl": "Polish",
+    "cs": "Czech",
+    "fil": "Filipino",
+    "fa": "Persian",
+    "el": "Greek",
+    "ro": "Romanian",
+    "hu": "Hungarian",
+    "mk": "Macedonian",
+}
+
+
+def _qwen_language(value: str | None) -> str | None:
+    if value is None or not value.strip():
+        return None
+
+    raw = value.strip()
+    normalized = raw.replace("_", "-").lower()
+    if normalized in _QWEN_LANGUAGE_ALIASES:
+        return _QWEN_LANGUAGE_ALIASES[normalized]
+
+    # Upstream accepts canonical English names such as "Chinese".
+    return raw[:1].upper() + raw[1:].lower()
+
