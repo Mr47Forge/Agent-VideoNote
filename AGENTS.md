@@ -26,6 +26,7 @@ Agent-VideoNote 是**独立实现**。
 7. 不自动调用 GPT 图像 AI 或其他付费生成式修图。
 8. 不因为换会话、换客户端或上下文压缩而重新执行已经持久化完成的阶段。
 9. 未完成许可证核验前，不把第三方组件写成“可商用已确认”。
+10. 不把具体 ASR 模型名硬编码进 workflow、application、task state 或 MCP 对外协议。
 
 ## 模块职责
 
@@ -33,13 +34,19 @@ Agent-VideoNote 是**独立实现**。
 - `application/`：用例编排
 - `tasks/`：任务状态与恢复
 - `media/`：FFmpeg/ffprobe
-- `asr/`：主转写、局部复核、上下文
+- `asr/`：可插拔 Provider、角色配置、识别上下文
 - `visuals/`：画面发现、清理、对位
 - `workflow/`：机器状态
 - 根目录 `workflow/`：Agent 可读规则
 - `delivery/`：交付检查
 - `storage/`：持久化适配
 - `adapters/`：MCP 等外部协议
+
+## ASR 约束
+
+工作流只允许依赖抽象角色，例如 `primary` / `review`，不得依赖 Nano、Qwen、Whisper、SenseVoice 等具体实现名称。
+
+具体模型属于 Provider 配置。替换模型时，正常情况下只应增加/修改 Provider 和配置，不应修改工作流规则。
 
 ## 新功能判断
 
