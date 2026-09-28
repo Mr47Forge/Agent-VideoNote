@@ -1,16 +1,14 @@
 from __future__ import annotations
 
 import hashlib
-import json
 
 from agent_videonote.core.types import SourceIdentity
 
 
 def task_id_for_source(source: SourceIdentity) -> str:
-    payload = {
-        "path": source.path.casefold(),
-        "size": source.size,
-        "mtime_ns": source.mtime_ns,
-    }
-    raw = json.dumps(payload, ensure_ascii=False, sort_keys=True).encode("utf-8")
+    if not source.fingerprint:
+        # Compatibility fallback for an old in-memory SourceIdentity.
+        raw = f"legacy:{source.path.casefold()}:{source.size}:{source.mtime_ns}".encode("utf-8")
+    else:
+        raw = f"v2:{source.size}:{source.fingerprint}".encode("ascii")
     return hashlib.sha256(raw).hexdigest()[:16]
