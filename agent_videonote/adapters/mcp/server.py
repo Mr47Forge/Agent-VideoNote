@@ -24,6 +24,23 @@ def create_server():
         return facade.health()
 
     @mcp.tool()
+    def asr_models(
+        role: str | None = None,
+        priority: str = "balanced",
+        integrated_only: bool = False,
+        limit: int = 5,
+        detail: str = "compact",
+    ) -> dict[str, Any]:
+        """按需查看 ASR 模型候选；默认紧凑返回，不会自动下载安装。"""
+        return facade.asr_models(
+            role=role,
+            priority=priority,
+            integrated_only=integrated_only,
+            limit=limit,
+            detail=detail,
+        )
+
+    @mcp.tool()
     def prepare(source: str) -> dict[str, Any]:
         """创建或恢复本地视频任务，并读取紧凑媒体信息。"""
         return facade.prepare(source)
