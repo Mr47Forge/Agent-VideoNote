@@ -3,6 +3,7 @@
     {
       "id": "primary-local",
       "driver": "funasr_auto",
+      "max_concurrency": 1,
       "options": {
         "model": "REPLACE_WITH_MODEL_ID_OR_LOCAL_PATH",
         "hub": "ms",
@@ -14,6 +15,7 @@
     {
       "id": "review-local",
       "driver": "qwen_asr",
+      "max_concurrency": 1,
       "options": {
         "model": "REPLACE_WITH_MODEL_ID_OR_LOCAL_PATH",
         "device_map": "cuda:0",
