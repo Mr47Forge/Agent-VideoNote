@@ -1,0 +1,19 @@
+__pycache__/
+*.py[cod]
+*.log
+.venv/
+.env
+dist/
+build/
+*.egg-info/
+
+# 本机运行数据、模型、任务结果都不能提交
+data/
+models/
+runtime/
+workflow-tasks/
+asr-context/
+
+# IDE
+.vscode/
+.idea/
