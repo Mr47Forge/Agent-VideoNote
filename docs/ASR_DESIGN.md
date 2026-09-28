@@ -116,3 +116,14 @@ Provider 自己负责：
 application 不应该知道模型如何加载。
 
 特别是局部复核场景，应允许 Provider 常驻，避免历史上“一窗口一次冷启动”的浪费。
+
+## 并发原则
+
+Provider 的具体模型实现不直接处理 MCP 并发。
+
+运行层统一用并发护栏包装 Provider：
+
+- 默认 `max_concurrency = 1`；
+- 同一个 Provider 默认串行推理，优先避免显存暴涨、线程不安全和结果串扰；
+- 只有在某个 Provider 已实测支持并发时，才在运行配置中显式调高；
+- primary / review 使用不同 Provider 时，各自有独立并发额度。
