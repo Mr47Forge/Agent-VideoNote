@@ -8,6 +8,7 @@ from typing import Any
 class CleanupRequest:
     image_path: str
     source_video: str
+    output_path: str | None = None
     state_id: str | None = None
     nearby_frame_paths: tuple[str, ...] = ()
     hints: dict[str, Any] = field(default_factory=dict)
