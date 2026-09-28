@@ -326,8 +326,6 @@ class TranscriptOperationsMixin:
             "read_with": "get_transcript",
         }
 
-    @staticmethod
-
 
 def _context_capabilities(context: RecognitionContext) -> set[AsrCapability]:
     required: set[AsrCapability] = set()
