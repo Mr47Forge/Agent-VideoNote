@@ -14,6 +14,7 @@
 | transcripts | SRT → 统一 Transcript、基础时间轴校验、限制段数读取 |
 | asr | Provider、capability、role profile、运行配置、默认并发护栏 |
 | asr/context | 课程上下文持久化；支持本次调用叠加临时词/语言/文本 |
+| asr/catalog | 按需模型候选目录：速度、质量、硬件、优缺点、基准、集成状态；默认紧凑返回 |
 | application | 已拆成 task / transcript / delivery / health 操作；service.py 仅薄门面 |
 | recovery | media/transcript/review/delivery 中断后的已有产物可自动收口/接管 |
 | review cache | 缓存键包含 Provider + 实际上下文；缓存命中与首次返回结构一致 |
