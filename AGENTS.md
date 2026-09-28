@@ -1,63 +1,40 @@
-# Agent-VideoNote · Agent 工作约束
+# Agent-VideoNote · 最小启动规则
 
-任何 Agent 修改本仓库前先读本文件，再读当前模块 README。
+## PROCESS（正常跑视频）
 
-## 项目身份
+启动时只读：
+1. 本文件
+2. `workflow/00-core.md`
 
-Agent-VideoNote 是**独立实现**。
+然后立即连接/启动 MCP，并优先调用 `health`、`prepare` 或 `task` 获取真实状态。
 
-不是 VideoNote-MCP 的 fork、精简版、插件或兼容层。正常运行不得依赖 VideoNote-MCP。
+**禁止在 MCP 启动前预读：**
+- `README.md`
+- `docs/**`
+- 各模块 `README.md`
+- 整个源码树
+- `tests/**`
+- 历史任务目录
 
-## 不允许做的事
+拿到 `current_stage` 后，只读对应阶段规则：
+- input → `workflow/10-input.md`
+- transcript → `workflow/20-transcript.md`
+- visual → `workflow/30-visual.md`
+- delivery → `workflow/40-delivery.md`
 
-1. 不复制 VideoNote-MCP 源代码。
-2. 不恢复对其数据库、缓存、配置或任务目录的运行依赖。
-3. 不把多个核心职责重新塞进一个大 server.py / manager.py / utils.py。
-4. 不在 MCP adapter 中实现 ASR、FFmpeg、视觉算法或工作流业务。
-5. 不在普通 PROCESS 中临时新建正式 Python / PowerShell / BAT 脚本。
-6. 不把某个视频的特殊参数硬编码成全局规则。
-7. 不自动调用 GPT 图像 AI 或付费生成式修图。
-8. 不因为换会话、换客户端、源文件搬盘或上下文压缩而重新执行已经持久化完成的阶段。
-9. 未完成许可证核验前，不把第三方组件写成“商用已确认”。
-10. 不把具体 ASR 模型名硬编码进 workflow、application、task state 或 MCP 对外协议。
-11. “转写完成”只返回摘要；全文必须通过有上限的分段读取工具获取。
-12. Provider 私有返回字段不能泄漏到 workflow、delivery 或 MCP 对外协议。
+已持久化完成的阶段不得因换会话、换 Agent 或上下文压缩而重读重做。
 
-## 模块职责
+## MAINTENANCE（改代码）
 
-- `core/`：共享基础类型、配置、错误
-- `application/`：用例编排
-- `tasks/`：任务状态与恢复
-- `storage/`：持久化
-- `media/`：FFmpeg/ffprobe
-- `transcripts/`：统一时间轴文本，不关心来源
-- `asr/`：Provider、能力声明、角色配置、识别上下文
-- `visuals/`：候选画面、清理策略、对位
-- `workflow/`：机器状态
-- 根目录 `workflow/`：Agent 可读规则
-- `delivery/`：交付检查
-- `adapters/`：MCP 等外部协议
+只读本文件 + 当前要修改的模块代码/测试；需要时再按需读对应设计文档。禁止为了“先了解项目”全仓扫文档和源码。
 
-## ASR 约束
+## 红线
 
-workflow 只允许依赖 `primary` / `review` 等角色，不得依赖 Nano、Qwen、Whisper、SenseVoice 等具体实现名称。
+- 独立于 VideoNote-MCP，不复制、不恢复其运行依赖。
+- MCP adapter 只做协议适配，不放 ASR/FFmpeg/视觉/工作流业务。
+- 普通 PROCESS 不现场制造正式脚本；缺能力记 unresolved。
+- workflow/application/task state/MCP 协议不硬编码具体 ASR 模型。
+- 转写工具默认只返回摘要，全文按段读取。
+- GPT 图像 AI / 付费生成式修图不进入默认流程。
 
-具体模型属于 Provider 配置。替换模型时，正常情况下只应修改 Provider 或配置。
-
-## PROCESS 与 MAINTENANCE
-
-如果临时实验最终证明值得复用：
-
-```text
-任务实验
-  ↓
-MAINTENANCE
-  ↓
-正式模块
-  ↓
-测试
-  ↓
-再供 PROCESS 调用
-```
-
-不能让任务目录本身成为长期代码仓库。现有策略无法安全解决时，应记录 unresolved，而不是在 PROCESS 中无限试错。
+其余架构、许可证、历史基线都属于**按需维护资料，不是运行上下文**。
