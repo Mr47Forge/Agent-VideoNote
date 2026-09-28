@@ -1,58 +1,50 @@
 # Agent-VideoNote · Agent 工作约束
 
-任何 Agent 在修改本仓库前先读本文件，再读与当前任务有关的模块 README。
+任何 Agent 修改本仓库前先读本文件，再读当前模块 README。
 
 ## 项目身份
 
 Agent-VideoNote 是**独立实现**。
 
-不是：
-
-- VideoNote-MCP fork
-- VideoNote-MCP 精简版
-- VideoNote-MCP 插件
-- VideoNote-MCP 兼容层
-
-正常运行不得依赖 VideoNote-MCP。
+不是 VideoNote-MCP 的 fork、精简版、插件或兼容层。正常运行不得依赖 VideoNote-MCP。
 
 ## 不允许做的事
 
-1. 不复制 VideoNote-MCP 源代码进本仓库。
-2. 不为了“省事”恢复对 `videonote_mcp`、其数据库、缓存、配置或任务目录的依赖。
-3. 不把多个核心职责重新塞进一个大文件。
-4. 不在 MCP adapter 中实现 ASR、FFmpeg、视觉处理或业务状态机。
+1. 不复制 VideoNote-MCP 源代码。
+2. 不恢复对其数据库、缓存、配置或任务目录的运行依赖。
+3. 不把多个核心职责重新塞进一个大 server.py / manager.py / utils.py。
+4. 不在 MCP adapter 中实现 ASR、FFmpeg、视觉算法或工作流业务。
 5. 不在普通 PROCESS 中临时新建正式 Python / PowerShell / BAT 脚本。
-6. 不把某一个视频的特殊参数硬编码成全局规则。
-7. 不自动调用 GPT 图像 AI 或其他付费生成式修图。
-8. 不因为换会话、换客户端或上下文压缩而重新执行已经持久化完成的阶段。
-9. 未完成许可证核验前，不把第三方组件写成“可商用已确认”。
+6. 不把某个视频的特殊参数硬编码成全局规则。
+7. 不自动调用 GPT 图像 AI 或付费生成式修图。
+8. 不因为换会话、换客户端、源文件搬盘或上下文压缩而重新执行已经持久化完成的阶段。
+9. 未完成许可证核验前，不把第三方组件写成“商用已确认”。
 10. 不把具体 ASR 模型名硬编码进 workflow、application、task state 或 MCP 对外协议。
+11. “转写完成”只返回摘要；全文必须通过有上限的分段读取工具获取。
+12. Provider 私有返回字段不能泄漏到 workflow、delivery 或 MCP 对外协议。
 
 ## 模块职责
 
-- `core/`：共享基础类型
+- `core/`：共享基础类型、配置、错误
 - `application/`：用例编排
 - `tasks/`：任务状态与恢复
+- `storage/`：持久化
 - `media/`：FFmpeg/ffprobe
-- `asr/`：可插拔 Provider、角色配置、识别上下文
-- `visuals/`：画面发现、清理、对位
+- `transcripts/`：统一时间轴文本，不关心来源
+- `asr/`：Provider、能力声明、角色配置、识别上下文
+- `visuals/`：候选画面、清理策略、对位
 - `workflow/`：机器状态
 - 根目录 `workflow/`：Agent 可读规则
 - `delivery/`：交付检查
-- `storage/`：持久化适配
 - `adapters/`：MCP 等外部协议
 
 ## ASR 约束
 
-工作流只允许依赖抽象角色，例如 `primary` / `review`，不得依赖 Nano、Qwen、Whisper、SenseVoice 等具体实现名称。
+workflow 只允许依赖 `primary` / `review` 等角色，不得依赖 Nano、Qwen、Whisper、SenseVoice 等具体实现名称。
 
-具体模型属于 Provider 配置。替换模型时，正常情况下只应增加/修改 Provider 和配置，不应修改工作流规则。
+具体模型属于 Provider 配置。替换模型时，正常情况下只应修改 Provider 或配置。
 
-## 新功能判断
-
-新增代码前必须先确定唯一归属模块。
-
-如果一个新需求需要同时修改多个模块，应通过清晰接口连接，而不是直接互相 import 内部实现。
+## PROCESS 与 MAINTENANCE
 
 如果临时实验最终证明值得复用：
 
@@ -68,4 +60,4 @@ MAINTENANCE
 再供 PROCESS 调用
 ```
 
-不能让任务目录本身成为长期代码仓库。
+不能让任务目录本身成为长期代码仓库。现有策略无法安全解决时，应记录 unresolved，而不是在 PROCESS 中无限试错。
