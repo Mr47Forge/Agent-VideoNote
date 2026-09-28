@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from agent_videonote.application.delivery_ops import DeliveryOperationsMixin
 from agent_videonote.application.health_ops import HealthOperationsMixin
+from agent_videonote.asr.catalog.service import ModelCatalogService
 from agent_videonote.application.task_ops import TaskOperationsMixin
 from agent_videonote.application.transcript_ops import TranscriptOperationsMixin
 from agent_videonote.asr.context.repository import CourseContextRepository
@@ -31,6 +32,7 @@ class ApplicationService(
         asr_registry: ProviderRegistry,
         asr_profile: AsrProfile,
         contexts: CourseContextRepository,
+        model_catalog: ModelCatalogService | None = None,
         startup_warnings: tuple[str, ...] = (),
     ):
         self.config = config
@@ -40,4 +42,21 @@ class ApplicationService(
         self.asr_registry = asr_registry
         self.asr_profile = asr_profile
         self.contexts = contexts
+        self.model_catalog = model_catalog or ModelCatalogService()
         self.startup_warnings = tuple(startup_warnings)
+
+    def list_asr_models(
+        self,
+        *,
+        role: str | None = None,
+        priority: str = "balanced",
+        integrated_only: bool = False,
+        limit: int = 5,
+    ) -> dict:
+        return self.model_catalog.list_models(
+            role=role,
+            priority=priority,
+            integrated_only=integrated_only,
+            limit=limit,
+        )
+
