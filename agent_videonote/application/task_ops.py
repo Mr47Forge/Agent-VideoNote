@@ -63,13 +63,31 @@ class TaskOperationsMixin:
 
     @staticmethod
     def _task_summary(state: Any) -> dict[str, Any]:
+        artifact_counts: dict[str, int] = {}
+        for artifact in state.artifacts.values():
+            kind = str(artifact.get("kind") or "unknown")
+            artifact_counts[kind] = artifact_counts.get(kind, 0) + 1
+
+        core_artifacts: dict[str, dict[str, Any]] = {}
+        for name in ("media_info", "transcript", "delivery_report"):
+            artifact = state.artifacts.get(name)
+            if not artifact:
+                continue
+            core_artifacts[name] = {
+                "kind": artifact.get("kind"),
+                "path": artifact.get("path"),
+            }
+
         return {
             "task_id": state.task_id,
             "source": state.source.path,
             "current_stage": state.current_stage,
             "completed_stages": list(state.completed_stages),
-            "artifacts": dict(state.artifacts),
+            "core_artifacts": core_artifacts,
+            "artifact_total": len(state.artifacts),
+            "artifact_counts": artifact_counts,
             "unresolved_count": len(state.unresolved),
+            "event_count": len(state.events),
             "updated_at": state.updated_at,
         }
 
