@@ -18,6 +18,7 @@ from agent_videonote.core.config import RuntimeConfig, load_runtime_config
 from agent_videonote.media.ffmpeg import FFmpegBackend
 from agent_videonote.storage.json_store import JsonTaskStore
 from agent_videonote.tasks.service import TaskService
+from agent_videonote.visuals.cleanup.factory import build_default_cleanup_registry
 from agent_videonote.visuals.cleanup.registry import CleanupRegistry
 from agent_videonote.visuals.service import VisualService
 from agent_videonote.workflow.engine import WorkflowEngine
@@ -45,7 +46,7 @@ def build_runtime(
     workflow = WorkflowEngine(store)
     media = FFmpegBackend(runtime_config)
     asr_registry = ProviderRegistry()
-    cleanup_registry = CleanupRegistry()
+    cleanup_registry = build_default_cleanup_registry()
     contexts = CourseContextRepository(runtime_config.paths.context / "courses")
 
     register_provider_specs(asr_registry, provider_specs)
