@@ -1,78 +1,100 @@
 # Agent-VideoNote
 
-面向 OpenCode、DSH、Codex 等 Agent 的轻量视频转写与图文整理运行层。
+面向 OpenCode、DSH、Codex 等 Agent 的独立视频处理运行层。
 
-这个项目不是 VideoNote-MCP 的继续堆叠版，而是为实际批量课程处理重新做的最小实现：只保留高准确率转写、局部复核、媒体切片/取帧、可续跑任务状态，以及按阶段加载的工作流。
+**这不是 VideoNote-MCP 的精简版、fork 或兼容层。**
 
-## 目标
+项目目标是直接组合第三方上游能力（例如 FFmpeg、FunASR、Qwen ASR 等）和我们自己的工作流、任务状态、视觉处理与交付校验，形成一套可长期维护、可商业化审计、跨 Agent 可复用的轻量系统。
 
-- 第一遍准确率优先，不追求“最快出字”
-- Fun-ASR-Nano-2512 作为主转写，支持课程热词
-- Qwen3-ASR-1.7B 只做有争议片段的局部复核
-- FFmpeg / ffprobe 负责确定性的媒体处理
-- 每个视频有独立任务目录和持久化状态，新会话可继续
-- 工作流按当前阶段加载，避免每轮把整份长规则塞进上下文
-- 不允许普通视频任务现场新造 Python / PowerShell 脚本
-- 去广告只使用本地、低成本、可复用方法；不依赖 GPT 图像 AI 或付费生成式修图
+## 当前阶段
 
-## 第一版明确不包含
+目前只搭建**模块化骨架与边界**，还没有把旧项目代码迁入。
 
-- 原版 `generate_note` / `batch_generate_notes`
-- LLM Provider / OpenAI API 管理
-- 原版自动写笔记
-- 评论、弹幕抓取
-- Playwright / 二维码登录
-- Whisper 主路线
+原则：
+
+- 不复制 VideoNote-MCP 源代码
+- 不把 VideoNote-MCP 作为运行依赖
+- 不读取其数据库、缓存或任务目录作为正常运行前提
+- 第三方库和模型未来直接从各自上游接入
+- 先做最小链路，再按真实需求增加能力
+
+## 目标链路
+
+```text
+本地视频 / 时间码字幕
+        ↓
+媒体探测与切片
+        ↓
+主 ASR
+        ↓
+有边界的局部复核
+        ↓
+画面发现 / 清理 / 对位
+        ↓
+Agent 分阶段处理
+        ↓
+最终转写 + 画面
+```
+
+## 模块结构
+
+```text
+agent_videonote/
+├─ core/           最小共享类型、配置、错误
+├─ application/    用例编排
+├─ tasks/          任务状态与续跑
+├─ media/          FFmpeg / ffprobe 封装
+├─ asr/
+│  ├─ primary/     主转写
+│  ├─ review/      局部复核
+│  └─ context/     热词和课程上下文
+├─ visuals/
+│  ├─ discovery/   候选画面、稳定状态
+│  ├─ cleanup/     广告/水印清理策略
+│  └─ alignment/   图片与正文语义对位
+├─ workflow/       工作流状态的机器表示
+├─ delivery/       最终交付机械校验
+├─ storage/        持久化适配
+└─ adapters/
+   └─ mcp/         MCP 薄适配层
+```
+
+Agent 可读规则单独放在根目录 `workflow/`，不和 Python 实现混在一起。
+
+## 架构红线
+
+1. MCP 层不能直接实现 ASR、FFmpeg 或视觉算法。
+2. ASR 不直接修改任务状态文件。
+3. 媒体模块不知道工作流和 Agent 的存在。
+4. 视觉模块不负责改转写文字。
+5. 普通视频任务不能因为遇到新情况就在任务目录新造正式脚本。
+6. 已完成状态不能因为换会话或换 Agent 自动失效。
+7. 运行数据、模型、任务中间产物不进入源码仓库。
+8. GPT 图像 AI / 付费生成式修图不属于默认工作流。
+9. 正常运行不得要求安装 VideoNote-MCP。
+
+详细约束：
+
+- `docs/ARCHITECTURE.md`
+- `docs/PROJECT_BOUNDARIES.md`
+- `docs/DIRECTORY_LAYOUT.md`
+- `THIRD_PARTY.md`
+
+## 第一阶段明确不做
+
+- 原项目自动笔记生成
+- 通用 LLM Provider
+- GPT API 管理
+- 评论 / 弹幕
+- Playwright 登录
+- 大而全的平台下载
 - Web UI
-- 大而全的平台适配
-- 自动调用昂贵图像生成/修复模型
+- 说话人分离
+- 多格式笔记导出
+- 旧 VideoNote-MCP 兼容层
 
-需要这些能力时，先证明它对当前工作流是必要的，再单独加入。
+## 商业化准备
 
-## 架构
+第三方代码和模型会分别登记许可证与分发方式，见 `THIRD_PARTY.md`。
 
-```text
-OpenCode / DSH / Codex
-        │
-        ▼
-   Agent-VideoNote MCP
-        │
-        ├─ 任务状态 / 续跑
-        ├─ FFmpeg / ffprobe
-        ├─ Fun-ASR-Nano-2512 + 课程热词
-        ├─ Qwen3-ASR 局部复核
-        ├─ 音频切片 / 视频取帧
-        └─ 紧凑结果读取
-        │
-        ▼
-按阶段加载 workflow/*.md
-```
-
-## 工作流文档
-
-- `workflow/00-core.md`：所有任务都必须遵守的少量硬边界
-- `workflow/10-transcribe.md`：转写与课程热词
-- `workflow/20-verify.md`：疑难句复核与停止条件
-- `workflow/30-visual.md`：取图、广告/水印处理边界
-- `workflow/40-package.md`：最终转写与图片交付
-
-Agent 在一个会话中先读取 `00-core.md`，之后只读取当前任务阶段对应的文件。不要为每个视频反复全文加载全部规则。
-
-## 运行数据
-
-默认保存到：
-
-```text
-%LOCALAPPDATA%\Agent-VideoNote\data
-```
-
-可通过环境变量修改：
-
-- `AGENT_VIDEONOTE_DATA_DIR`
-- `AGENT_VIDEONOTE_MODEL_DIR`
-
-现有模型可以继续复用，不要求重新下载；把 `AGENT_VIDEONOTE_MODEL_DIR` 指向已有模型目录即可。
-
-## 当前状态
-
-这是与原 VideoNote-MCP 解耦后的第一版骨架。优先把本地课程视频的核心链路跑稳，再决定是否增加网址下载等外围能力。
+当前仓库不从 VideoNote-MCP 复制实现，避免未来再次做一次“脱钩”。
