@@ -15,6 +15,20 @@ class McpToolFacade:
     def health(self) -> dict[str, Any]:
         return self.application.health()
 
+    def asr_models(
+        self,
+        role: str | None = None,
+        priority: str = "balanced",
+        integrated_only: bool = False,
+        limit: int = 5,
+    ) -> dict[str, Any]:
+        return self.application.list_asr_models(
+            role=role,
+            priority=priority,
+            integrated_only=integrated_only,
+            limit=limit,
+        )
+
     def prepare(self, source: str) -> dict[str, Any]:
         return self.application.prepare(source)
 
