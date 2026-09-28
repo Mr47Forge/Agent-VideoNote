@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib.util
 import wave
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -118,6 +119,14 @@ class QwenAsrProvider:
                 "forced_aligner": self.config.forced_aligner,
             },
         )
+
+    def preflight(self) -> tuple[str, ...]:
+        warnings: list[str] = []
+        if importlib.util.find_spec("qwen_asr") is None:
+            warnings.append("Python package 'qwen-asr' is not installed")
+        if importlib.util.find_spec("torch") is None:
+            warnings.append("Qwen ASR provider requires Python package 'torch'")
+        return tuple(warnings)
 
     def close(self) -> None:
         self._model = None
