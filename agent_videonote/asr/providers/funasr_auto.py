@@ -20,7 +20,8 @@ class FunAsrAutoConfig:
     vad_model: str | None = "fsmn-vad"
     vad_max_single_segment_time: int = 30000
     trust_remote_code: bool = True
-    expect_timestamps: bool = True
+    sentence_timestamp: bool = False
+    expect_word_timestamps: bool = False
     itn: bool = True
     batch_size: int = 1
     extra_init: dict[str, Any] = field(default_factory=dict)
@@ -53,8 +54,9 @@ class FunAsrAutoProvider:
         }
         if self.config.vad_model:
             caps.add(AsrCapability.LONG_AUDIO)
-        if self.config.expect_timestamps:
+        if self.config.sentence_timestamp or self.config.expect_word_timestamps:
             caps.add(AsrCapability.SEGMENT_TIMESTAMPS)
+        if self.config.expect_word_timestamps:
             caps.add(AsrCapability.WORD_TIMESTAMPS)
         if self.config.device.lower().startswith("cuda"):
             caps.add(AsrCapability.GPU)
@@ -73,6 +75,8 @@ class FunAsrAutoProvider:
             kwargs["hotwords"] = list(request.context.hotwords)
         if request.context.language:
             kwargs["language"] = _funasr_language(request.context.language)
+        if self.config.sentence_timestamp:
+            kwargs["sentence_timestamp"] = True
 
         raw_results = model.generate(**kwargs)
         if not isinstance(raw_results, list) or not raw_results:
@@ -109,9 +113,14 @@ class FunAsrAutoProvider:
                             TranscriptSegment(start=start, end=end, text=sentence_text)
                         )
 
-        if self.config.expect_timestamps and not segments:
+        if self.config.sentence_timestamp and not segments:
             raise CapabilityError(
-                f"{self.provider_id} was configured to require timestamps, "
+                f"{self.provider_id} was configured to require segment timestamps, "
+                "but this pipeline returned none"
+            )
+        if self.config.expect_word_timestamps and not words:
+            raise CapabilityError(
+                f"{self.provider_id} was configured to require word timestamps, "
                 "but this model/checkpoint returned none"
             )
 
