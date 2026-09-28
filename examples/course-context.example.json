@@ -1,0 +1,12 @@
+{
+  "course_id": "example-course",
+  "title_terms": [
+    "课程标题关键词"
+  ],
+  "glossary_terms": [
+    "专业术语一",
+    "专业术语二"
+  ],
+  "free_text": "只用于帮助识别上下文，不代表音频一定说了这些词。",
+  "language": "zh"
+}
