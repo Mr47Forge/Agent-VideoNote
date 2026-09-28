@@ -64,6 +64,19 @@ class TranscriptOperationsMixin:
     ) -> dict[str, Any]:
         state = self.tasks.get(task_id)
         existing = state.artifacts.get("transcript")
+        orphan_transcript = self.task_dir(task_id) / "transcript" / "transcript.json"
+        if not existing and orphan_transcript.is_file():
+            summary = self._transcript_summary(task_id, orphan_transcript)
+            state = self.tasks.register_artifact(
+                task_id,
+                "transcript",
+                Artifact(
+                    kind="transcript",
+                    path=str(orphan_transcript),
+                    metadata={"source_id": summary.get("source_id"), "recovered": True},
+                ),
+            )
+            existing = state.artifacts.get("transcript")
         if existing and Path(existing["path"]).is_file():
             path = Path(existing["path"])
             summary = self._transcript_summary(task_id, path)
@@ -111,6 +124,19 @@ class TranscriptOperationsMixin:
     ) -> dict[str, Any]:
         state = self.tasks.get(task_id)
         existing = state.artifacts.get("transcript")
+        orphan_transcript = self.task_dir(task_id) / "transcript" / "transcript.json"
+        if not existing and orphan_transcript.is_file():
+            summary = self._transcript_summary(task_id, orphan_transcript)
+            state = self.tasks.register_artifact(
+                task_id,
+                "transcript",
+                Artifact(
+                    kind="transcript",
+                    path=str(orphan_transcript),
+                    metadata={"source_id": summary.get("source_id"), "recovered": True},
+                ),
+            )
+            existing = state.artifacts.get("transcript")
         if existing and Path(existing["path"]).is_file():
             path = Path(existing["path"])
             summary = self._transcript_summary(task_id, path)
@@ -253,7 +279,25 @@ class TranscriptOperationsMixin:
         token = f"{start:.3f}-{end:.3f}-x{speed:.2f}".replace(".", "_")
         review_path = self.task_dir(task_id) / "reviews" / "results" / f"{token}.json"
         if review_path.is_file():
-            return read_json(review_path)
+            result = read_json(review_path)
+            artifact_name = f"review:{token}"
+            if artifact_name not in state.artifacts:
+                self.tasks.register_artifact(
+                    task_id,
+                    artifact_name,
+                    Artifact(
+                        kind="asr_review",
+                        path=str(review_path),
+                        metadata={
+                            "source_id": result.get("source_id"),
+                            "start": start,
+                            "end": end,
+                            "course_id": course_id,
+                            "recovered": True,
+                        },
+                    ),
+                )
+            return result
 
         audio_path = self.task_dir(task_id) / "reviews" / "audio" / f"{token}.wav"
         if not audio_path.is_file():
