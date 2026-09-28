@@ -31,6 +31,7 @@ class ApplicationService(
         asr_registry: ProviderRegistry,
         asr_profile: AsrProfile,
         contexts: CourseContextRepository,
+        startup_warnings: tuple[str, ...] = (),
     ):
         self.config = config
         self.tasks = tasks
@@ -39,3 +40,4 @@ class ApplicationService(
         self.asr_registry = asr_registry
         self.asr_profile = asr_profile
         self.contexts = contexts
+        self.startup_warnings = tuple(startup_warnings)
