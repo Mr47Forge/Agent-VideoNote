@@ -49,3 +49,17 @@ def test_mcp_server_does_not_import_core_implementations_directly() -> None:
         if any(name.startswith(prefix) for prefix in forbidden_prefixes)
     ]
     assert offenders == []
+
+def test_task_state_writers_use_atomic_mutate() -> None:
+    task_service = (
+        ROOT / "agent_videonote" / "tasks" / "service.py"
+    ).read_text(encoding="utf-8")
+    workflow_engine = (
+        ROOT / "agent_videonote" / "workflow" / "engine.py"
+    ).read_text(encoding="utf-8")
+
+    assert "._store.save(" not in task_service
+    assert ".store.save(" not in workflow_engine
+    assert "._store.mutate(" in task_service
+    assert ".store.mutate(" in workflow_engine
+
