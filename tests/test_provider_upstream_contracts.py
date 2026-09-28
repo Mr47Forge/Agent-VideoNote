@@ -97,3 +97,33 @@ def test_qwen_language_aliases_match_upstream_canonical_names() -> None:
     assert _qwen_language("yue") == "Cantonese"
     assert _qwen_language("Japanese") == "Japanese"
     assert _qwen_language(None) is None
+
+def test_provider_preflight_reports_missing_runtime_packages(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "importlib.util.find_spec",
+        lambda name: None,
+    )
+
+    fun = FunAsrAutoProvider(
+        FunAsrAutoConfig(
+            provider_id="fun",
+            model="placeholder",
+            device="cuda:0",
+        )
+    )
+
+    from agent_videonote.asr.providers.qwen_asr import QwenAsrConfig, QwenAsrProvider
+
+    qwen = QwenAsrProvider(
+        QwenAsrConfig(
+            provider_id="qwen",
+            model="placeholder",
+            device_map="cuda:0",
+        )
+    )
+
+    assert "Python package 'funasr' is not installed" in fun.preflight()
+    assert any("torch" in item for item in fun.preflight())
+    assert "Python package 'qwen-asr' is not installed" in qwen.preflight()
+    assert any("torch" in item for item in qwen.preflight())
+
