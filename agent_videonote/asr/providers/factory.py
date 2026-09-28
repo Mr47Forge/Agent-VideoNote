@@ -11,16 +11,23 @@ from agent_videonote.core.errors import ConfigurationError
 def build_provider(spec: ProviderSpec):
     options = dict(spec.options)
 
-    if spec.driver == "funasr_auto":
-        provider = FunAsrAutoProvider(
-            FunAsrAutoConfig(provider_id=spec.provider_id, **options)
-        )
-    elif spec.driver == "qwen_asr":
-        provider = QwenAsrProvider(
-            QwenAsrConfig(provider_id=spec.provider_id, **options)
-        )
-    else:
-        raise ConfigurationError(f"unknown ASR provider driver: {spec.driver}")
+    try:
+        if spec.driver == "funasr_auto":
+            provider = FunAsrAutoProvider(
+                FunAsrAutoConfig(provider_id=spec.provider_id, **options)
+            )
+        elif spec.driver == "qwen_asr":
+            provider = QwenAsrProvider(
+                QwenAsrConfig(provider_id=spec.provider_id, **options)
+            )
+        else:
+            raise ConfigurationError(f"unknown ASR provider driver: {spec.driver}")
+    except ConfigurationError:
+        raise
+    except (TypeError, ValueError) as exc:
+        raise ConfigurationError(
+            f"invalid configuration for ASR provider '{spec.provider_id}': {exc}"
+        ) from exc
 
     return ConcurrencyGuardProvider(
         provider,
@@ -31,6 +38,17 @@ def build_provider(spec: ProviderSpec):
 def register_provider_specs(
     registry: ProviderRegistry,
     specs: tuple[ProviderSpec, ...],
-) -> None:
+    *,
+    tolerate_errors: bool = False,
+) -> tuple[str, ...]:
+    warnings: list[str] = []
     for spec in specs:
-        registry.register(build_provider(spec))
+        try:
+            registry.register(build_provider(spec))
+        except ConfigurationError as exc:
+            if not tolerate_errors:
+                raise
+            warnings.append(
+                f"ASR provider '{spec.provider_id}' was not registered: {exc}"
+            )
+    return tuple(warnings)
