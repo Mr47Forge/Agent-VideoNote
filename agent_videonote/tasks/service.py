@@ -17,8 +17,23 @@ class TaskService:
     def create_or_resume(self, source_path: str | Path) -> TaskState:
         source = SourceIdentity.from_path(source_path)
         task_id = task_id_for_source(source)
+
         if self._store.exists(task_id):
-            return self._store.load(task_id)
+            state = self._store.load(task_id)
+            if state.source.path != source.path or state.source.mtime_ns != source.mtime_ns:
+                previous_path = state.source.path
+                state.source = source
+                state.add_event(
+                    "source.relocated_or_metadata_changed",
+                    {
+                        "previous_path": previous_path,
+                        "current_path": source.path,
+                        "fingerprint": source.fingerprint,
+                    },
+                )
+                return self._store.save(state)
+            return state
+
         state = TaskState.new(task_id, source, WorkflowStage.INPUT.value)
         return self._store.create(state)
 
