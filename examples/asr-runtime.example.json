@@ -9,7 +9,8 @@
         "hub": "ms",
         "device": "cuda:0",
         "vad_model": "fsmn-vad",
-        "expect_timestamps": true
+        "sentence_timestamp": true,
+        "expect_word_timestamps": false
       }
     },
     {
