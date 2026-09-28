@@ -6,6 +6,9 @@ readme = "README.md"
 requires-python = ">=3.11,<3.14"
 dependencies = []
 
+[project.scripts]
+agent-videonote-selfcheck = "agent_videonote.selfcheck:main"
+
 [dependency-groups]
 dev = [
   "pytest>=8",
