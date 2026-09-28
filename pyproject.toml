@@ -1,26 +1,16 @@
 [project]
 name = "agent-videonote"
 version = "0.1.0"
-description = "轻量多 Agent 视频转写与图文整理 MCP 运行层"
+description = "独立、模块化的多 Agent 视频转写与图文处理运行层"
 readme = "README.md"
 requires-python = ">=3.11,<3.14"
-dependencies = [
-  "mcp>=1.29.0,<2",
-]
+dependencies = []
 
-[project.optional-dependencies]
-asr = [
-  "funasr==1.4.15",
-  "qwen-asr==0.0.6",
-  "torch>=2.6",
-]
+[dependency-groups]
 dev = [
   "pytest>=8",
   "ruff>=0.9",
 ]
-
-[project.scripts]
-agent-videonote = "agent_videonote.server:main"
 
 [build-system]
 requires = ["hatchling"]
