@@ -24,3 +24,6 @@ class ExternalToolError(AgentVideoNoteError):
 class StateSchemaError(AgentVideoNoteError):
     """Persisted task state uses an unsupported schema version."""
 
+class TaskLockTimeoutError(AgentVideoNoteError):
+    """Task state could not be locked within the short mutation timeout."""
+
