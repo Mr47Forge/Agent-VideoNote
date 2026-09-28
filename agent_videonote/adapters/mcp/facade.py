@@ -12,6 +12,9 @@ class McpToolFacade:
     def __init__(self, application: ApplicationService):
         self.application = application
 
+    def health(self) -> dict[str, Any]:
+        return self.application.health()
+
     def prepare(self, source: str) -> dict[str, Any]:
         return self.application.prepare(source)
 
