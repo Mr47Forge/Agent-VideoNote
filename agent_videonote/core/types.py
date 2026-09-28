@@ -6,7 +6,8 @@ from pathlib import Path
 from typing import Any
 
 
-_FINGERPRINT_CHUNK_SIZE = 1024 * 1024
+_FINGERPRINT_CHUNK_SIZE = 256 * 1024
+_FINGERPRINT_SAMPLE_COUNT = 12
 
 
 @dataclass(frozen=True)
@@ -57,20 +58,27 @@ class Artifact:
 
 
 def _quick_fingerprint(path: Path, size: int) -> str:
-    """Hash bounded samples so moving a large video does not create a new task."""
+    """Hash bounded, distributed samples without reading an entire large video."""
     digest = hashlib.sha256()
-    digest.update(b"agent-videonote-source-v1\0")
+    digest.update(b"agent-videonote-source-v2\0")
     digest.update(str(size).encode("ascii"))
     digest.update(b"\0")
 
     if size == 0:
         return digest.hexdigest()
 
-    offsets = [0]
-    if size > _FINGERPRINT_CHUNK_SIZE:
-        middle = max(0, size // 2 - _FINGERPRINT_CHUNK_SIZE // 2)
-        end = max(0, size - _FINGERPRINT_CHUNK_SIZE)
-        offsets.extend([middle, end])
+    max_offset = max(0, size - _FINGERPRINT_CHUNK_SIZE)
+    if max_offset == 0:
+        offsets = [0]
+    else:
+        count = min(
+            _FINGERPRINT_SAMPLE_COUNT,
+            max(2, (size + _FINGERPRINT_CHUNK_SIZE - 1) // _FINGERPRINT_CHUNK_SIZE),
+        )
+        offsets = [
+            round(max_offset * index / (count - 1))
+            for index in range(count)
+        ]
 
     seen: set[int] = set()
     with path.open("rb") as handle:
