@@ -35,7 +35,7 @@
 | visuals/cleanup | 多帧真实像素重建、移动覆盖追踪、安全裁剪尚未正式实现 |
 | visuals/alignment | 尚未实现内容级语义对位 |
 | transcript verification | 尚未实现新的源段覆盖 / 更正对账协议 |
-| lifecycle | 尚未实现 temp / frame / review 中间文件的归档与清理策略 |
+| lifecycle | 已实现任务空间统计 + 保守清理计划（只读/dry-run）；真正删除、归档与 MCP 暴露均未实现 |
 | task schema migration | 当前会明确拒绝未知 schema；真正的版本迁移器尚未需要/实现 |
 | Windows 实机并发 | 跨进程 JSON 锁逻辑有自动测试；仍需真实 Windows 多客户端验证 |
 
