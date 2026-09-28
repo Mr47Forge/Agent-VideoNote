@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import json
 from pathlib import Path
 from typing import Any
 
@@ -276,7 +278,13 @@ class TranscriptOperationsMixin:
         required = {AsrCapability.SHORT_AUDIO} | _context_capabilities(ctx)
         provider = self.asr_registry.get(provider_id, required)
 
-        token = f"{start:.3f}-{end:.3f}-x{speed:.2f}".replace(".", "_")
+        token = _review_cache_token(
+            start=start,
+            end=end,
+            speed=speed,
+            provider_id=provider_id,
+            context=ctx,
+        )
         review_path = self.task_dir(task_id) / "reviews" / "results" / f"{token}.json"
         if review_path.is_file():
             result = read_json(review_path)
@@ -411,4 +419,27 @@ def _merge_recognition_context(
         hotwords=hotwords,
         free_text="\n".join(texts) if texts else None,
     )
+
+def _review_cache_token(
+    *,
+    start: float,
+    end: float,
+    speed: float,
+    provider_id: str,
+    context: RecognitionContext,
+) -> str:
+    payload = json.dumps(
+        {
+            "provider_id": provider_id,
+            "language": context.language,
+            "hotwords": list(context.hotwords),
+            "free_text": context.free_text,
+        },
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    digest = hashlib.sha256(payload).hexdigest()[:12]
+    prefix = f"{start:.3f}-{end:.3f}-x{speed:.2f}".replace(".", "_")
+    return f"{prefix}-{digest}"
 
