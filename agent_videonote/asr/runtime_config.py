@@ -14,6 +14,7 @@ class ProviderSpec:
     provider_id: str
     driver: str
     options: dict[str, Any] = field(default_factory=dict)
+    max_concurrency: int = 1
 
 
 @dataclass(frozen=True)
@@ -43,6 +44,11 @@ def load_asr_runtime_config(path: str | Path) -> AsrRuntimeConfig:
         provider_id = str(item.get("id") or "").strip()
         driver = str(item.get("driver") or "").strip()
         options = item.get("options", {})
+        max_concurrency = int(item.get("max_concurrency", 1))
+        if max_concurrency < 1:
+            raise ConfigurationError(
+                f"provider max_concurrency must be >= 1: {provider_id or '<unknown>'}"
+            )
         if not provider_id or not driver:
             raise ConfigurationError("provider spec requires id and driver")
         if provider_id in seen:
@@ -50,7 +56,14 @@ def load_asr_runtime_config(path: str | Path) -> AsrRuntimeConfig:
         if not isinstance(options, dict):
             raise ConfigurationError(f"provider options must be an object: {provider_id}")
         seen.add(provider_id)
-        providers.append(ProviderSpec(provider_id, driver, dict(options)))
+        providers.append(
+            ProviderSpec(
+                provider_id,
+                driver,
+                dict(options),
+                max_concurrency=max_concurrency,
+            )
+        )
 
     return AsrRuntimeConfig(profile=profile, providers=tuple(providers))
 
