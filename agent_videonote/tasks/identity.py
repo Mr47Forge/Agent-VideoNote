@@ -10,5 +10,5 @@ def task_id_for_source(source: SourceIdentity) -> str:
         # Compatibility fallback for an old in-memory SourceIdentity.
         raw = f"legacy:{source.path.casefold()}:{source.size}:{source.mtime_ns}".encode("utf-8")
     else:
-        raw = f"v2:{source.size}:{source.fingerprint}".encode("ascii")
+        raw = f"v3:{source.size}:{source.fingerprint}".encode("ascii")
     return hashlib.sha256(raw).hexdigest()[:16]
