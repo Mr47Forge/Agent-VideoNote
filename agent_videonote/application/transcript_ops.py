@@ -344,13 +344,15 @@ class TranscriptOperationsMixin:
         context: RecognitionContext | None,
         course_id: str | None,
     ) -> RecognitionContext:
-        if context is not None and course_id is not None:
-            raise ConfigurationError(
-                "use either course_id or an explicit recognition context, not both"
-            )
-        if course_id is not None:
-            return self.contexts.to_recognition_context(self.contexts.load(course_id))
-        return context or RecognitionContext()
+        base = (
+            self.contexts.to_recognition_context(self.contexts.load(course_id))
+            if course_id is not None
+            else RecognitionContext()
+        )
+        if context is None:
+            return base
+
+        return _merge_recognition_context(base, context)
 
     def _save_transcript(self, task_id: str, transcript: Transcript) -> Path:
         return write_json_atomic(
@@ -392,3 +394,21 @@ def _clean_terms(values: list[str] | tuple[str, ...]) -> list[str]:
         seen.add(term)
         result.append(term)
     return result
+
+def _merge_recognition_context(
+    base: RecognitionContext,
+    override: RecognitionContext,
+) -> RecognitionContext:
+    hotwords = tuple(_clean_terms((*base.hotwords, *override.hotwords)))
+
+    texts: list[str] = []
+    for value in (base.free_text, override.free_text):
+        if value and value.strip() and value.strip() not in texts:
+            texts.append(value.strip())
+
+    return RecognitionContext(
+        language=override.language or base.language,
+        hotwords=hotwords,
+        free_text="\n".join(texts) if texts else None,
+    )
+
