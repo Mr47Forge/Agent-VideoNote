@@ -51,6 +51,15 @@ class HealthOperationsMixin:
                 "roles": roles,
                 "providers": providers,
                 "preflight": provider_preflight,
+                "model_help": (
+                    {
+                        "available": True,
+                        "tool": "asr_models",
+                        "reason": "no ASR provider is currently registered",
+                    }
+                    if not providers
+                    else None
+                ),
             },
             "warnings": warnings,
             "models_loaded": False,
