@@ -344,7 +344,9 @@ class TranscriptOperationsMixin:
                 },
             ),
         )
-        return result
+        # Return the persisted JSON shape so cache-hit and cache-miss responses
+        # have identical list/dict types.
+        return read_json(review_path)
 
     def _resolve_context(
         self,
