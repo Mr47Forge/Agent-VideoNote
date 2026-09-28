@@ -27,7 +27,8 @@ class HealthOperationsMixin:
         ffmpeg = _resolve_executable(self.config.ffmpeg_bin)
         ffprobe = _resolve_executable(self.config.ffprobe_bin)
 
-        warnings = list(role_warnings)
+        warnings = list(getattr(self, "startup_warnings", ()))
+        warnings.extend(role_warnings)
         if ffmpeg is None:
             warnings.append(f"ffmpeg not found: {self.config.ffmpeg_bin}")
         if ffprobe is None:
