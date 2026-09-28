@@ -1,0 +1,6 @@
+{
+  "roles": {
+    "primary": "your-primary-provider-id",
+    "review": "your-review-provider-id"
+  }
+}
