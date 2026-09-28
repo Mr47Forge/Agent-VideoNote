@@ -22,6 +22,7 @@ class ModelCatalogService:
         priority: str = "balanced",
         integrated_only: bool = False,
         limit: int = 5,
+        detail: str = "compact",
     ) -> dict[str, Any]:
         if priority not in _PRIORITY_TERMS:
             raise ValueError(
@@ -29,6 +30,8 @@ class ModelCatalogService:
             )
         if limit < 1 or limit > 10:
             raise ValueError("limit must be between 1 and 10")
+        if detail not in {"compact", "full"}:
+            raise ValueError("detail must be 'compact' or 'full'")
 
         models = [
             item
@@ -46,7 +49,11 @@ class ModelCatalogService:
             "priority": priority,
             "role": role,
             "integrated_only": integrated_only,
-            "models": [_compact_card(item) for item in models[:limit]],
+            "detail": detail,
+            "models": [
+                _full_card(item) if detail == "full" else _compact_card(item)
+                for item in models[:limit]
+            ],
             "total_matches": len(models),
         }
 
@@ -67,6 +74,25 @@ def _sort_key(item: ModelCard, priority: str) -> tuple[int, int, str]:
 
 
 def _compact_card(item: ModelCard) -> dict[str, Any]:
+    benchmark = item.benchmarks[0].to_dict() if item.benchmarks else None
+    return {
+        "id": item.catalog_id,
+        "name": item.name,
+        "model_id": item.model_id,
+        "integration_status": item.integration_status,
+        "provider_driver": item.provider_driver,
+        "fit_roles": list(item.fit_roles),
+        "speed": item.speed,
+        "quality": item.quality,
+        "hardware_note": item.hardware_note,
+        "strength": item.strengths[0] if item.strengths else None,
+        "weakness": item.weaknesses[0] if item.weaknesses else None,
+        "representative_benchmark": benchmark,
+        "verified_at": item.verified_at,
+    }
+
+
+def _full_card(item: ModelCard) -> dict[str, Any]:
     return {
         "id": item.catalog_id,
         "name": item.name,
@@ -81,7 +107,7 @@ def _compact_card(item: ModelCard) -> dict[str, Any]:
         "strengths": list(item.strengths),
         "weaknesses": list(item.weaknesses),
         "capabilities": list(item.capabilities),
-        "benchmarks": [item_.to_dict() for item_ in item.benchmarks],
+        "benchmarks": [value.to_dict() for value in item.benchmarks],
         "license_note": item.license_note,
         "verified_at": item.verified_at,
         "source": item.source,
