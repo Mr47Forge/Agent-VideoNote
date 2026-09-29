@@ -15,6 +15,9 @@ class McpToolFacade:
     def health(self) -> dict[str, Any]:
         return self.application.health()
 
+    def asr_setup_plan(self) -> dict[str, Any]:
+        return self.application.asr_setup_plan()
+
     def asr_models(
         self,
         role: str | None = None,

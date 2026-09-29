@@ -10,6 +10,7 @@ from agent_videonote.asr.profiles.models import AsrProfile
 from agent_videonote.asr.providers.factory import register_provider_specs
 from agent_videonote.asr.providers.registry import ProviderRegistry
 from agent_videonote.asr.runtime_config import (
+    AsrRuntimeConfig,
     ProviderSpec,
     disabled_asr_runtime_config,
     load_asr_runtime_config,
@@ -43,6 +44,7 @@ def build_runtime(
     config: RuntimeConfig | None = None,
     startup_warnings: tuple[str, ...] = (),
     tolerate_provider_errors: bool = False,
+    asr_config_path: Path | None = None,
 ) -> RuntimeContainer:
     runtime_config = config or load_runtime_config()
     store = JsonTaskStore(runtime_config.paths.tasks)
@@ -69,6 +71,8 @@ def build_runtime(
         asr_profile=profile,
         contexts=contexts,
         startup_warnings=all_startup_warnings,
+        asr_runtime=AsrRuntimeConfig(profile=profile, providers=provider_specs),
+        asr_config_path=asr_config_path,
     )
     visuals = VisualService(tasks, cleanup_registry)
 
@@ -113,4 +117,5 @@ def build_runtime_from_environment(
         config=runtime_config,
         startup_warnings=tuple(startup_warnings),
         tolerate_provider_errors=True,
+        asr_config_path=config_path,
     )

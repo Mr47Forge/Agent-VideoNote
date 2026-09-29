@@ -24,6 +24,11 @@ def create_server():
         return facade.health()
 
     @mcp.tool()
+    def asr_setup_plan() -> dict[str, Any]:
+        """只读探测本机 ASR 环境并给出安装计划；不安装包或下载模型。"""
+        return facade.asr_setup_plan()
+
+    @mcp.tool()
     def asr_models(
         role: str | None = None,
         priority: str = "balanced",
