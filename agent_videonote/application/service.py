@@ -3,6 +3,7 @@ from __future__ import annotations
 from agent_videonote.application.catalog_ops import CatalogOperationsMixin
 from agent_videonote.application.delivery_ops import DeliveryOperationsMixin
 from agent_videonote.application.health_ops import HealthOperationsMixin
+from agent_videonote.application.lifecycle_ops import LifecycleOperationsMixin
 from agent_videonote.application.setup_ops import SetupOperationsMixin
 from agent_videonote.asr.catalog.service import ModelCatalogService
 from agent_videonote.application.task_ops import TaskOperationsMixin
@@ -21,6 +22,7 @@ from agent_videonote.workflow.engine import WorkflowEngine
 class ApplicationService(
     CatalogOperationsMixin,
     HealthOperationsMixin,
+    LifecycleOperationsMixin,
     SetupOperationsMixin,
     TaskOperationsMixin,
     TranscriptOperationsMixin,

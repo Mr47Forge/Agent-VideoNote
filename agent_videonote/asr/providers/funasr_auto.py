@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import importlib.util
+import gc
+import weakref
 import wave
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -43,6 +45,10 @@ class FunAsrAutoProvider:
     @property
     def provider_id(self) -> str:
         return self.config.provider_id
+
+    @property
+    def is_loaded(self) -> bool:
+        return self._model is not None
 
     @property
     def capabilities(self) -> frozenset[AsrCapability]:
@@ -154,7 +160,16 @@ class FunAsrAutoProvider:
         return tuple(warnings)
 
     def close(self) -> None:
+        reference = None
+        if self._model is not None:
+            try:
+                reference = weakref.ref(self._model)
+            except TypeError:
+                pass
         self._model = None
+        gc.collect()
+        if reference is not None and reference() is not None:
+            raise RuntimeError(f"ASR model is still referenced after release: {self.provider_id}")
         try:
             import torch
             if self.config.device.lower().startswith("cuda") and torch.cuda.is_available():

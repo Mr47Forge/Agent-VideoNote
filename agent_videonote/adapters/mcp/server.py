@@ -24,6 +24,11 @@ def create_server():
         return facade.health()
 
     @mcp.tool()
+    def release_asr_role(role: str) -> dict[str, Any]:
+        """结束一个 ASR 角色的驻留批次；不会删除模型文件或 Provider 配置。"""
+        return facade.release_asr_role(role)
+
+    @mcp.tool()
     def asr_setup_plan(search_dirs: list[str] | None = None) -> dict[str, Any]:
         """只读探测本机 ASR 环境并给出安装计划；不安装包或下载模型。"""
         return facade.asr_setup_plan(search_dirs=search_dirs)

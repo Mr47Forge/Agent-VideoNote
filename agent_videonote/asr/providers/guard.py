@@ -25,6 +25,10 @@ class ConcurrencyGuardProvider:
     def capabilities(self):
         return self._provider.capabilities
 
+    @property
+    def is_loaded(self) -> bool | None:
+        return getattr(self._provider, "is_loaded", None)
+
     def transcribe(self, request: TranscriptionRequest) -> Transcript:
         with self._semaphore:
             return self._provider.transcribe(request)

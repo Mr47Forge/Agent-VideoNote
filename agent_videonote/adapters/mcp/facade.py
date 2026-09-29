@@ -15,6 +15,9 @@ class McpToolFacade:
     def health(self) -> dict[str, Any]:
         return self.application.health()
 
+    def release_asr_role(self, role: str) -> dict[str, Any]:
+        return self.application.release_role(role)
+
     def asr_setup_plan(self, search_dirs: list[str] | None = None) -> dict[str, Any]:
         return self.application.asr_setup_plan(search_dirs=search_dirs)
 

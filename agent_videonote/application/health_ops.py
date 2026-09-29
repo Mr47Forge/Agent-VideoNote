@@ -9,6 +9,8 @@ class HealthOperationsMixin:
     def health(self) -> dict[str, Any]:
         providers = self.asr_registry.list_capabilities()
         provider_preflight = self.asr_registry.preflight()
+        loaded = self.asr_registry.loaded_providers()
+        gpu_loaded = [item["provider_id"] for item in loaded if item["gpu"]]
 
         roles: dict[str, dict[str, Any]] = {}
         role_warnings: list[str] = []
@@ -50,6 +52,10 @@ class HealthOperationsMixin:
             "asr": {
                 "roles": roles,
                 "providers": providers,
+                "loaded_providers": loaded,
+                "gpu_loaded": gpu_loaded,
+                "multiple_gpu_resident": len(gpu_loaded) > 1,
+                "gpu_residency_policy": "single_provider",
                 "preflight": provider_preflight,
                 "model_help": (
                     {
@@ -62,7 +68,7 @@ class HealthOperationsMixin:
                 ),
             },
             "warnings": warnings,
-            "models_loaded": False,
+            "models_loaded": bool(loaded),
         }
 
 

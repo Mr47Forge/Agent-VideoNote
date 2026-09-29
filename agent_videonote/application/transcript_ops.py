@@ -181,6 +181,8 @@ class TranscriptOperationsMixin:
             raise CapabilityError("invalid provider transcript: " + "; ".join(problems))
 
         path = self._save_transcript(task_id, transcript)
+        if read_json(path) != json.loads(json.dumps(transcript.to_dict(), ensure_ascii=False)):
+            raise CapabilityError("persisted provider transcript does not match validated result")
         self.tasks.register_artifact(
             task_id,
             "transcript",
@@ -197,7 +199,9 @@ class TranscriptOperationsMixin:
             task_id,
             evidence={"transcript": str(path), "source_id": transcript.source_id},
         )
-        return self._transcript_summary(task_id, path)
+        summary = self._transcript_summary(task_id, path)
+        self.asr_registry.release_provider(provider_id)
+        return summary
 
     def get_transcript(
         self,
