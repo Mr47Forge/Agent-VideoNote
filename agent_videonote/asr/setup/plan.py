@@ -10,6 +10,7 @@ from typing import Any
 
 from agent_videonote.asr.catalog.builtin import BUILTIN_MODELS
 from agent_videonote.asr.runtime_config import AsrRuntimeConfig
+from agent_videonote.asr.setup.discovery import discovery_roots, find_local_models, find_local_vad
 from agent_videonote.core.config import RuntimeConfig
 
 
@@ -24,6 +25,7 @@ def asr_setup_plan(
     asr: AsrRuntimeConfig,
     *,
     config_path: Path | None = None,
+    search_dirs: list[str] | None = None,
 ) -> dict[str, Any]:
     """Inspect local prerequisites and return a plan; never install or load a model."""
     media = {name: _executable(value) for name, value in (
@@ -34,6 +36,9 @@ def asr_setup_plan(
     packages = {name: _package_version(dist) for name, dist in _PACKAGES.items()}
     cuda = _torch_cuda() if packages["torch"] else {"available": False, "reason": "torch is not installed"}
     models_dir = config.paths.models.expanduser().resolve()
+    roots = discovery_roots(models_dir, search_dirs)
+    discovered = find_local_models(BUILTIN_MODELS, roots)
+    vad_candidates = find_local_vad(roots)
     free_gb = _free_gb(models_dir)
     selected = []
     needed_packages: set[str] = set()
@@ -59,6 +64,15 @@ def asr_setup_plan(
         model = str(spec.options.get("model", ""))
         card = by_model.get(model) or by_id.get(model)
         local = _local_model(model, models_dir)
+        if local is None and card and discovered[card.catalog_id]:
+            local = Path(discovered[card.catalog_id][0]["path"])
+        if local and card is None:
+            card = next((item for item in BUILTIN_MODELS if any(
+                Path(found["path"]) == local for found in discovered[item.catalog_id]
+            )), None)
+        verified = bool(card and local and any(
+            Path(found["path"]) == local for found in discovered[card.catalog_id]
+        ))
         needs_cuda = str(spec.options.get("device", spec.options.get("device_map", ""))).lower().startswith("cuda")
         if needs_cuda and cuda["available"] is not True:
             missing.append(f"CUDA unavailable for {role}: {provider_id}")
@@ -66,12 +80,22 @@ def asr_setup_plan(
             missing.append(f"model configuration for {role}: {provider_id}")
         elif local is None:
             missing.append(f"local model for {role}: {model}")
+        vad_model = str(spec.options.get("vad_model") or "")
+        local_vad = _local_model(vad_model, models_dir) if vad_model else None
+        if vad_model and local_vad is None and vad_candidates:
+            local_vad = Path(vad_candidates[0]["path"])
         selected.append({
             "role": role, "provider": provider_id, "driver": spec.driver,
             "model": model or None, "local_model": str(local) if local else None,
+            "local_model_verified": verified,
+            "uses_absolute_model_path": Path(model).is_absolute() if model else False,
+            "suggested_model_path": str(local) if local else None,
             "model_download_needed": bool(model and local is None),
             "target_dir": str(models_dir / model) if model and not Path(model).is_absolute() else model or None,
             "estimated_model_gb": _MODEL_GB.get(card.catalog_id) if card else None,
+            "vad_model": vad_model or None,
+            "local_vad_model": str(local_vad) if local_vad else None,
+            "suggested_vad_model_path": str(local_vad) if local_vad else None,
         })
     if not any(item["configured"] if "configured" in item else True for item in selected):
         missing.append("ASR Provider/Profile configuration")
@@ -84,8 +108,10 @@ def asr_setup_plan(
             "id": card.catalog_id, "model_id": card.model_id,
             "driver": card.provider_driver, "roles": list(card.fit_roles),
             "estimated_model_gb": _MODEL_GB.get(card.catalog_id),
-            "local_model": str(_local_model(card.model_id, models_dir) or "") or None,
-            "target_dir": str(models_dir / card.model_id),
+            "local_model": discovered[card.catalog_id][0]["path"] if discovered[card.catalog_id] else None,
+            "local_candidates": discovered[card.catalog_id],
+            "model_download_needed": not bool(discovered[card.catalog_id]),
+            "target_dir": discovered[card.catalog_id][0]["path"] if discovered[card.catalog_id] else str(models_dir / card.model_id),
             "runtime_packages_to_install": [
                 item for item in _DRIVER_PACKAGES.get(card.provider_driver or "", ())
                 if packages[item] is None
@@ -99,16 +125,24 @@ def asr_setup_plan(
         "media": media, "nvidia": gpu, "torch_cuda": cuda, "packages": packages,
         "configuration": {"path": str(config_path) if config_path else None,
                           "exists": config_path.is_file() if config_path else None,
-                          "roles": dict(asr.profile.roles), "providers": selected},
+                          "roles": dict(asr.profile.roles), "providers": selected,
+                          "available_providers": [
+                              {"id": spec.provider_id, "driver": spec.driver,
+                               "model": spec.options.get("model"), "vad_model": spec.options.get("vad_model")}
+                              for spec in asr.providers
+                          ]},
         "models_dir": str(models_dir), "models_dir_exists": models_dir.is_dir(),
         "models_dir_override": "AGENT_VIDEONOTE_MODEL_DIR",
+        "search_roots": roots,
+        "existing_models": {key: paths for key, paths in discovered.items() if paths},
+        "existing_vad_models": vad_candidates,
         "disk_free_gb": free_gb, "missing": missing,
         "estimated_model_download_gb": round(known_download_gb, 2),
         "model_download_size_unknown": any(item["estimated_model_gb"] is None for item in downloads),
         "runtime_packages_to_install": sorted(needed_packages),
         "recommended_models": recommendations,
         "disk_note": "Model sizes are advisory weight estimates; package/cache/temporary space is additional. Unknown sizes are null.",
-        "next_step": "Review the plan, choose Provider/Profile and installation targets, then explicitly authorize a separate installation action.",
+        "next_step": "Reuse a discovered absolute model path in Provider/Profile. Install or migrate only as a separate, explicitly chosen action.",
     }
 
 

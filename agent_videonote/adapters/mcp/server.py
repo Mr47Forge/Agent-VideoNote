@@ -24,9 +24,9 @@ def create_server():
         return facade.health()
 
     @mcp.tool()
-    def asr_setup_plan() -> dict[str, Any]:
+    def asr_setup_plan(search_dirs: list[str] | None = None) -> dict[str, Any]:
         """只读探测本机 ASR 环境并给出安装计划；不安装包或下载模型。"""
-        return facade.asr_setup_plan()
+        return facade.asr_setup_plan(search_dirs=search_dirs)
 
     @mcp.tool()
     def asr_models(
