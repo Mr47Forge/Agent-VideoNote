@@ -41,6 +41,25 @@ def create_server():
         return facade.clean_visual_candidate(task_id, candidate_id)
 
     @mcp.tool()
+    def repair_visual_candidate(
+        task_id: str,
+        candidate_id: str,
+        provider: str,
+        mask_path: str,
+        window_seconds: float = 3.0,
+        interval: float = 1.0,
+    ) -> dict[str, Any]:
+        """使用明确 mask 调指定修复 Provider；不会自动删除任何文字。"""
+        return facade.repair_visual_candidate(
+            task_id,
+            candidate_id,
+            provider,
+            mask_path,
+            window_seconds,
+            interval,
+        )
+
+    @mcp.tool()
     def release_asr_role(role: str) -> dict[str, Any]:
         """结束一个 ASR 角色的驻留批次；不会删除模型文件或 Provider 配置。"""
         return facade.release_asr_role(role)

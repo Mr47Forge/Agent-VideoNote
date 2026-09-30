@@ -15,6 +15,7 @@ from agent_videonote.storage.json_store import JsonTaskStore
 from agent_videonote.tasks.service import TaskService
 from agent_videonote.visuals.cleanup.factory import build_default_cleanup_registry
 from agent_videonote.visuals.cleanup.registry import CleanupRegistry
+from agent_videonote.visuals.cleanup.types import CleanupResult
 from agent_videonote.visuals.cleanup.source_search import (
     SourceFrameCleanup, SourceSearchConfig, select_clean_frame,
 )
@@ -374,3 +375,95 @@ def test_candidate_must_belong_to_current_task_and_source(tmp_path, monkeypatch)
 def test_search_config_rejects_unbounded_nearby_frames():
     with pytest.raises(ValueError, match="max_samples"):
         SourceSearchConfig(radius_seconds=6, sampling_interval=0.5, max_samples=20)
+
+
+class FakeMaskedRepairStrategy:
+    strategy_id = "fake-mask"
+
+    def __init__(self):
+        self.calls = []
+
+    def capabilities(self):
+        return {
+            "strategy_id": self.strategy_id,
+            "available": True,
+            "kind": "image_inpaint",
+            "requires_mask": True,
+            "requires_gpu": False,
+            "external_runtime": False,
+            "automatic_text_removal": False,
+        }
+
+    def preflight(self):
+        return []
+
+    def can_handle(self, request):
+        return (
+            request.hints.get("provider") == self.strategy_id
+            and bool(request.hints.get("mask_path"))
+        )
+
+    def clean(self, request):
+        self.calls.append(request)
+        output = Path(request.output_path)
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_bytes(Path(request.image_path).read_bytes())
+        return CleanupResult(
+            status="resolved",
+            output_path=str(output),
+            strategy_id=self.strategy_id,
+            detail={"generated_pixels": True},
+        )
+
+
+def test_explicit_masked_repair_is_persisted_and_idempotent(tmp_path):
+    clean = page()
+    frames = {second: clean for second in range(11)}
+    app, _ = build_app(tmp_path, frames)
+    task_id, image, _, _ = prepared_task(app, tmp_path, frames)
+    mask = tmp_path / "manual-mask.png"
+    mask.write_bytes(b"explicit mask")
+
+    registry = CleanupRegistry()
+    strategy = FakeMaskedRepairStrategy()
+    registry.register(strategy)
+    app.cleanup_registry = registry
+
+    first = app.repair_visual_candidate(
+        task_id,
+        "vc-0001",
+        provider="fake-mask",
+        mask_path=str(mask),
+    )
+    second = app.repair_visual_candidate(
+        task_id,
+        "vc-0001",
+        provider="fake-mask",
+        mask_path=str(mask),
+    )
+
+    assert first == second
+    assert first["status"] == "resolved"
+    assert first["provider"] == "fake-mask"
+    assert Path(first["output_path"]).read_bytes() == image.read_bytes()
+    assert len(strategy.calls) == 1
+    assert app.tasks.get(task_id).artifacts["visual_repairs"]["path"].endswith(
+        str(Path("visual") / "repairs")
+    )
+
+
+def test_explicit_masked_repair_rejects_unknown_provider(tmp_path):
+    clean = page()
+    frames = {second: clean for second in range(11)}
+    app, _ = build_app(tmp_path, frames)
+    task_id, _, _, _ = prepared_task(app, tmp_path, frames)
+    mask = tmp_path / "manual-mask.png"
+    mask.write_bytes(b"explicit mask")
+
+    with pytest.raises(ValueError, match="cannot be used"):
+        app.repair_visual_candidate(
+            task_id,
+            "vc-0001",
+            provider="unknown-provider",
+            mask_path=str(mask),
+        )

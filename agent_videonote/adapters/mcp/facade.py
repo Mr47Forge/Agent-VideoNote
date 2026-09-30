@@ -131,6 +131,24 @@ class McpToolFacade:
     def clean_visual_candidate(self, task_id: str, candidate_id: str) -> dict[str, Any]:
         return self.application.clean_visual_candidate(task_id, candidate_id)
 
+    def repair_visual_candidate(
+        self,
+        task_id: str,
+        candidate_id: str,
+        provider: str,
+        mask_path: str,
+        window_seconds: float = 3.0,
+        interval: float = 1.0,
+    ) -> dict[str, Any]:
+        return self.application.repair_visual_candidate(
+            task_id,
+            candidate_id,
+            provider=provider,
+            mask_path=mask_path,
+            window_seconds=window_seconds,
+            interval=interval,
+        )
+
     def complete_visual(self, task_id: str, evidence: dict[str, Any]) -> dict[str, Any]:
         return self.application.complete_visual(task_id, evidence)
 
