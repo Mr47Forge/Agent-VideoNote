@@ -169,14 +169,20 @@ class SourceFrameCleanup:
         if len(nearby) + len(exact) > self.config.max_samples:
             raise ValueError("nearby frame count exceeds max_samples")
         if not exact:
-            return self._unresolved("candidate_frame_unavailable", len(nearby))
+            raise ValueError("candidate source frame is unavailable")
         current = FrameSample(timestamp, exact[0].pixels)
         stored_preview = decode(candidate.get("fingerprint", {}).get("preview"))
         if stored_preview is None or difference(preview(current.pixels), stored_preview) > 0.06:
-            return self._unresolved("candidate_frame_mismatch", len(nearby) + len(exact))
+            raise ValueError("candidate frame does not match its discovery preview")
         selection, reason = select_clean_frame(current, nearby, self.config)
         if selection is None:
-            return self._unresolved(reason, len(nearby) + len(exact))
+            return CleanupResult(
+                status="clean", output_path=str(candidate["image_path"]),
+                strategy_id="source-frame-replacement",
+                detail={"evidence": {"assessment": "no_cleanup_required_by_current_evidence",
+                                     "search_reason": reason,
+                                     "sample_count": len(nearby) + len(exact)}},
+            )
 
         temp_dir.mkdir(parents=True, exist_ok=True)
         temp_frame = temp_dir / f"source-{selection.timestamp:.3f}.jpg"
@@ -189,7 +195,13 @@ class SourceFrameCleanup:
             )
             result = self.registry.resolve(request)
             if not result.resolved:
-                return self._unresolved("replacement_strategy_rejected", len(nearby) + len(exact))
+                return CleanupResult(
+                    status="unresolved", output_path=None,
+                    strategy_id="source-frame-replacement",
+                    detail={"unresolved_reason": "replacement_strategy_rejected",
+                            "evidence": {**selection.evidence,
+                                         "sample_count": len(nearby) + len(exact)}},
+                )
             return CleanupResult(
                 status="resolved", output_path=result.output_path,
                 strategy_id=result.strategy_id,
@@ -204,11 +216,3 @@ class SourceFrameCleanup:
                 temp_dir.rmdir()
             except OSError:
                 pass
-
-    @staticmethod
-    def _unresolved(reason: str, sample_count: int) -> CleanupResult:
-        return CleanupResult(
-            status="unresolved", output_path=None,
-            strategy_id="source-frame-replacement",
-            detail={"unresolved_reason": reason, "evidence": {"sample_count": sample_count}},
-        )

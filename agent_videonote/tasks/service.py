@@ -63,6 +63,19 @@ class TaskService:
 
         return self._store.mutate(task_id, change)
 
+    def remove_unresolved(self, task_id: str, category: str, candidate_id: str) -> TaskState:
+        """Remove only a matching candidate issue, retaining other unresolved work."""
+        def change(state: TaskState) -> None:
+            retained = [item for item in state.unresolved
+                        if not (item.get("category") == category
+                                and item.get("candidate_id") == candidate_id)]
+            if len(retained) != len(state.unresolved):
+                state.unresolved = retained
+                state.add_event("unresolved.reclassified",
+                                {"category": category, "candidate_id": candidate_id})
+
+        return self._store.mutate(task_id, change)
+
     def record_event(
         self,
         task_id: str,

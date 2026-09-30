@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import math
 import re
+import shutil
 from pathlib import Path
 from typing import Any
 
@@ -92,16 +93,27 @@ class VisualOperationsMixin:
             raise ValueError("visual candidate provenance does not match the current task")
 
         result_path = task_dir / "visual" / "cleanup" / f"{candidate_id}.json"
+        legacy_record = None
         if result_path.is_file():
             record = read_json(result_path)
             if (record.get("source_fingerprint") != source.fingerprint
                     or record.get("original_image_path") != str(image_path)
                     or record.get("original_timestamp") != timestamp):
                 raise ValueError("persisted cleanup result does not match the current candidate")
-            if record["resolved"] and not Path(record["output_path"]).is_file():
-                raise FileNotFoundError("persisted cleaned image is missing")
-            self._register_cleanup_result(task_id, candidate_id, result_path, record)
-            return self._cleanup_summary(record)
+            if record.get("status") == "resolved" or ("status" not in record and record["resolved"]):
+                if not record.get("output_path") or not Path(record["output_path"]).is_file():
+                    raise FileNotFoundError("persisted cleaned image is missing")
+            elif record.get("status") == "clean" and not image_path.is_file():
+                raise FileNotFoundError("original visual candidate is missing")
+            if record.get("status") in ("clean", "resolved") or ("status" not in record and record["resolved"]):
+                self._register_cleanup_result(task_id, candidate_id, result_path, record)
+                return self._cleanup_summary(record)
+            if record.get("status") == "unresolved":
+                self._register_cleanup_result(task_id, candidate_id, result_path, record)
+                return self._cleanup_summary(record)
+            if record.get("resolved") is not False or record.get("schema_version") != 1:
+                raise ValueError("unknown persisted cleanup result schema")
+            legacy_record = record
 
         if (state.current_stage != WorkflowStage.VISUAL.value
                 or WorkflowStage.TRANSCRIPT.value not in state.completed_stages
@@ -119,7 +131,7 @@ class VisualOperationsMixin:
             output_path=output_path,
         )
         record = {
-            "schema_version": 1,
+            "schema_version": 2,
             "candidate_id": candidate_id,
             "source_fingerprint": source.fingerprint,
             "original_timestamp": timestamp,
@@ -129,9 +141,14 @@ class VisualOperationsMixin:
             "strategy_id": result.strategy_id,
             "confidence": result.detail.get("confidence"),
             "evidence": result.detail.get("evidence", {}),
+            "status": result.status,
             "resolved": result.resolved,
             "unresolved_reason": result.detail.get("unresolved_reason"),
         }
+        if legacy_record is not None:
+            backup_path = result_path.with_suffix(".phase1.json")
+            if not backup_path.exists():
+                shutil.copy2(result_path, backup_path)
         write_json_atomic(result_path, record)
         self._register_cleanup_result(task_id, candidate_id, result_path, record)
         return self._cleanup_summary(record)
@@ -144,21 +161,27 @@ class VisualOperationsMixin:
                 task_id, "visual_cleanup",
                 Artifact(kind="visual_cleanup", path=str(result_path.parent)),
             )
-        if (not record["resolved"]
-                and not any(item.get("category") == "visual_cleanup"
-                            and item.get("candidate_id") == candidate_id
-                            for item in self.tasks.get(task_id).unresolved)):
+        if record.get("status") == "unresolved" and not any(
+                item.get("category") == "visual_cleanup"
+                and item.get("candidate_id") == candidate_id
+                for item in self.tasks.get(task_id).unresolved):
             self.tasks.add_unresolved(
                 task_id, "visual_cleanup",
                 {"candidate_id": candidate_id,
                  "reason": record["unresolved_reason"],
                  "record_path": str(result_path)},
             )
+        elif record.get("status") in ("clean", "resolved") or record.get("resolved") is True:
+            if any(item.get("category") == "visual_cleanup"
+                   and item.get("candidate_id") == candidate_id
+                   for item in self.tasks.get(task_id).unresolved):
+                self.tasks.remove_unresolved(task_id, "visual_cleanup", candidate_id)
 
     @staticmethod
     def _cleanup_summary(record: dict[str, Any]) -> dict[str, Any]:
         return {
             "candidate_id": record["candidate_id"],
+            "status": record.get("status", "resolved" if record["resolved"] else "unresolved"),
             "resolved": record["resolved"],
             "strategy": record["strategy_id"],
             "original_timestamp": record["original_timestamp"],

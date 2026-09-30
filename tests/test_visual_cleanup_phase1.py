@@ -14,6 +14,7 @@ from agent_videonote.storage.artifacts import read_json, write_json_atomic
 from agent_videonote.storage.json_store import JsonTaskStore
 from agent_videonote.tasks.service import TaskService
 from agent_videonote.visuals.cleanup.factory import build_default_cleanup_registry
+from agent_videonote.visuals.cleanup.registry import CleanupRegistry
 from agent_videonote.visuals.cleanup.source_search import (
     SourceFrameCleanup, SourceSearchConfig, select_clean_frame,
 )
@@ -117,8 +118,8 @@ def test_changed_page_cannot_replace_candidate(tmp_path):
     second = bytes(255 - value for value in first)
     frames = {index: first if index <= 5 else second for index in range(11)}
     result, media, _ = clean_direct(tmp_path, frames)
-    assert not result.resolved
-    assert result.detail["unresolved_reason"] == "no_two_sided_same_state_witness"
+    assert result.status == "clean"
+    assert result.detail["evidence"]["search_reason"] == "no_two_sided_same_state_witness"
     assert not media.extracted
 
 
@@ -127,7 +128,7 @@ def test_changed_chat_text_is_not_treated_as_disappearing_ad(tmp_path):
     with_text = page(added_text=True)
     frames = {second: with_text if second == 5 else original for second in range(11)}
     result, media, _ = clean_direct(tmp_path, frames)
-    assert not result.resolved
+    assert result.status == "clean"
     assert not media.extracted
 
 
@@ -142,17 +143,33 @@ def test_changed_chat_bubble_is_not_treated_as_opaque_overlay(tmp_path):
     frames = {second: bytes(changed) if second == 5 else original
               for second in range(11)}
     result, media, _ = clean_direct(tmp_path, frames)
-    assert not result.resolved
+    assert result.status == "clean"
     assert not media.extracted
 
 
-def test_no_clean_frame_is_unresolved(tmp_path):
+def test_no_clean_frame_without_overlay_evidence_is_clean(tmp_path):
     covered = overlay(page())
     frames = {second: covered for second in range(11)}
     result, media, _ = clean_direct(tmp_path, frames)
-    assert not result.resolved
-    assert result.detail["unresolved_reason"] == "no_verified_clean_frame"
+    assert result.status == "clean"
+    assert result.detail["evidence"]["search_reason"] == "no_verified_clean_frame"
     assert not media.extracted
+
+
+def test_verified_overlay_with_unavailable_strategy_is_unresolved(tmp_path):
+    clean = page()
+    frames = {second: overlay(clean) if second == 5 else clean for second in range(11)}
+    source = tmp_path / "video.mp4"
+    source.write_bytes(b"source")
+    image = tmp_path / "candidate.jpg"
+    image.write_bytes(frames[5])
+    result = SourceFrameCleanup(FakeMedia(frames), FakeSampler(frames), CleanupRegistry()).clean(
+        source=source, candidate=candidate(frames[5], image), duration=11,
+        temp_dir=tmp_path / "temp", output_path=tmp_path / "clean.jpg",
+    )
+    assert result.status == "unresolved"
+    assert result.detail["unresolved_reason"] == "replacement_strategy_rejected"
+    assert result.detail["evidence"]["occluded_pixel_fraction"] > 0
 
 
 def test_prefers_more_complete_stable_witness():
@@ -237,7 +254,7 @@ def test_application_persists_result_and_reuses_it_after_restart(tmp_path, monke
     assert restarted.tasks.get(task_id).artifacts["visual_cleanup"]["path"] == str(result_path.parent)
 
 
-def test_unresolved_is_persistent_and_not_duplicated(tmp_path, monkeypatch):
+def test_clean_is_persistent_and_never_added_to_unresolved(tmp_path, monkeypatch):
     covered = overlay(page())
     frames = {second: covered for second in range(11)}
     app, _ = build_app(tmp_path, frames)
@@ -248,10 +265,89 @@ def test_unresolved_is_persistent_and_not_duplicated(tmp_path, monkeypatch):
     first = app.clean_visual_candidate(task_id, "vc-0001")
     second = app.clean_visual_candidate(task_id, "vc-0001")
     assert first == second
-    assert not first["resolved"]
+    assert first["status"] == "clean"
+    assert len(sampler.calls) == 2
+    assert not [x for x in app.tasks.get(task_id).unresolved
+                if x["category"] == "visual_cleanup"]
+
+
+def test_evidenced_unresolved_is_persistent_and_not_duplicated(tmp_path, monkeypatch):
+    clean = page()
+    frames = {second: overlay(clean) if second == 5 else clean for second in range(11)}
+    app, _ = build_app(tmp_path, frames)
+    app.cleanup_registry = CleanupRegistry()
+    task_id, _, _, _ = prepared_task(app, tmp_path, frames)
+    sampler = FakeSampler(frames)
+    monkeypatch.setattr("agent_videonote.application.visual_ops.FFmpegFrameSampler",
+                        lambda _bin: sampler)
+    first = app.clean_visual_candidate(task_id, "vc-0001")
+    second = app.clean_visual_candidate(task_id, "vc-0001")
+    assert first == second
+    assert first["status"] == "unresolved"
+    assert first["unresolved_reason"] == "replacement_strategy_rejected"
     assert len(sampler.calls) == 2
     assert len([x for x in app.tasks.get(task_id).unresolved
                 if x["category"] == "visual_cleanup"]) == 1
+
+
+def test_legacy_unresolved_is_reassessed_and_only_matching_issue_removed(tmp_path, monkeypatch):
+    clean = page()
+    frames = {second: clean for second in range(11)}
+    app, _ = build_app(tmp_path, frames)
+    task_id, image, _, _ = prepared_task(app, tmp_path, frames)
+    result_path = app.task_dir(task_id) / "visual" / "cleanup" / "vc-0001.json"
+    write_json_atomic(result_path, {
+        "schema_version": 1, "candidate_id": "vc-0001",
+        "source_fingerprint": SourceIdentity.from_path(tmp_path / "source.mp4").fingerprint,
+        "original_timestamp": 5.0, "original_image_path": str(image.resolve()),
+        "replacement_timestamp": None, "output_path": None,
+        "strategy_id": "source-frame-replacement", "confidence": None,
+        "evidence": {"sample_count": 12}, "resolved": False,
+        "unresolved_reason": "no_verified_clean_frame",
+    })
+    app.tasks.add_unresolved(task_id, "visual_cleanup", {
+        "candidate_id": "vc-0001", "reason": "no_verified_clean_frame"})
+    app.tasks.add_unresolved(task_id, "asr_review", {"candidate_id": "vc-0001"})
+    app.tasks.add_unresolved(task_id, "visual_cleanup", {"candidate_id": "vc-9999"})
+    sampler = FakeSampler(frames)
+    monkeypatch.setattr("agent_videonote.application.visual_ops.FFmpegFrameSampler",
+                        lambda _bin: sampler)
+    first = app.clean_visual_candidate(task_id, "vc-0001")
+    assert first["status"] == "clean"
+    assert read_json(result_path)["schema_version"] == 2
+    assert read_json(result_path.with_suffix(".phase1.json"))["schema_version"] == 1
+    assert {(x["category"], x["candidate_id"]) for x in app.tasks.get(task_id).unresolved} == {
+        ("asr_review", "vc-0001"), ("visual_cleanup", "vc-9999")}
+    restarted, _ = build_app(tmp_path, frames)
+    assert restarted.clean_visual_candidate(task_id, "vc-0001") == first
+    assert len(sampler.calls) == 2
+
+
+def test_legacy_resolved_result_is_reused_without_rescanning(tmp_path, monkeypatch):
+    clean = page()
+    frames = {second: clean for second in range(11)}
+    app, _ = build_app(tmp_path, frames)
+    task_id, image, _, _ = prepared_task(app, tmp_path, frames)
+    result_path = app.task_dir(task_id) / "visual" / "cleanup" / "vc-0001.json"
+    output = app.task_dir(task_id) / "visual" / "cleaned" / "vc-0001.jpg"
+    output.parent.mkdir(parents=True)
+    output.write_bytes(clean)
+    write_json_atomic(result_path, {
+        "schema_version": 1, "candidate_id": "vc-0001",
+        "source_fingerprint": SourceIdentity.from_path(tmp_path / "source.mp4").fingerprint,
+        "original_timestamp": 5.0, "original_image_path": str(image.resolve()),
+        "replacement_timestamp": 4.0, "output_path": str(output),
+        "strategy_id": "source-frame-replacement", "confidence": 0.9,
+        "evidence": {"occluded_pixel_fraction": 0.1}, "resolved": True,
+        "unresolved_reason": None,
+    })
+    monkeypatch.setattr("agent_videonote.application.visual_ops.FFmpegFrameSampler",
+                        lambda _bin: pytest.fail("legacy resolved result must not be scanned"))
+    summary = app.clean_visual_candidate(task_id, "vc-0001")
+    assert summary["status"] == "resolved"
+    assert summary["replacement_timestamp"] == 4.0
+    assert read_json(result_path)["schema_version"] == 1
+    assert not result_path.with_suffix(".phase1.json").exists()
 
 
 def test_candidate_must_belong_to_current_task_and_source(tmp_path, monkeypatch):
