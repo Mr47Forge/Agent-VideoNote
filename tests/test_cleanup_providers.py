@@ -1,7 +1,10 @@
 from pathlib import Path
 import sys
+import pytest
 
 from agent_videonote.visuals.cleanup.factory import build_default_cleanup_registry
+from agent_videonote.visuals.cleanup.providers.common import backend_metrics
+from agent_videonote.visuals.cleanup.providers._vsr_bridge import _composite_masked
 from agent_videonote.visuals.cleanup.providers.propainter import ProPainterCleanupStrategy
 from agent_videonote.visuals.cleanup.providers.vsr import VsrLamaCleanupStrategy
 from agent_videonote.visuals.cleanup.types import CleanupRequest
@@ -81,3 +84,20 @@ def test_propainter_reuses_vsr_source_and_shared_weights(tmp_path: Path) -> None
     assert capabilities["single_python"] == sys.executable
     assert "ProPainter weights are missing" in capabilities["reason"]
     assert "inference_propainter.py" not in capabilities["reason"]
+
+
+def test_backend_metrics_extracts_only_compact_metrics_line() -> None:
+    output = "warning from backend\nAGENT_VIDEONOTE_METRICS={\"cuda_used\": true, \"load_seconds\": 2.5}\n"
+    assert backend_metrics(output) == {"cuda_used": True, "load_seconds": 2.5}
+    assert backend_metrics("warning only") == {}
+
+
+def test_temporal_output_preserves_all_pixels_outside_explicit_mask() -> None:
+    np = pytest.importorskip("numpy")
+    original = np.zeros((3, 3, 3), dtype=np.uint8)
+    generated = np.full_like(original, 255)
+    mask = np.zeros((3, 3), dtype=np.uint8)
+    mask[1, 1] = 255
+    result = _composite_masked(original, generated, mask)
+    assert result[1, 1].tolist() == [255, 255, 255]
+    assert int(result.sum()) == 3 * 255

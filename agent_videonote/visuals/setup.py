@@ -30,6 +30,7 @@ _MINIMAL_PACKAGES = {
     "scipy": "scipy>=1.11",
     "einops": "einops>=0.7",
     "tqdm": "tqdm>=4.66",
+    "matplotlib": "matplotlib>=3.8,<4",
 }
 
 _TORCHVISION_BY_TORCH = {
@@ -216,7 +217,7 @@ def _install_minimal_dependencies(actions: list[str]) -> None:
     ]
     if not missing:
         return
-    _run([sys.executable, "-m", "pip", "install", *missing])
+    _run([*_package_installer(), *missing])
     actions.append("installed_minimal_visual_dependencies")
 
 
@@ -238,16 +239,23 @@ def _install_matching_torchvision(actions: list[str]) -> None:
         raise RuntimeError(
             f"no safe torchvision mapping is defined for torch {torch.__version__}"
         )
-    command = [
-        sys.executable, "-m", "pip", "install",
-        f"torchvision~={tv}.0", "--no-deps",
-    ]
+    command = [*_package_installer(), f"torchvision~={tv}.0", "--no-deps"]
     cuda = getattr(torch.version, "cuda", None)
     if cuda:
         index = "cu" + cuda.replace(".", "")
         command.extend(["--index-url", f"https://download.pytorch.org/whl/{index}"])
     _run(command)
     actions.append(f"installed_torchvision_for_torch_{version}")
+
+
+def _package_installer() -> list[str]:
+    """Install only into the active environment, including uv venvs without pip."""
+    if importlib.util.find_spec("pip") is not None:
+        return [sys.executable, "-m", "pip", "install"]
+    uv = shutil.which("uv")
+    if uv is not None:
+        return [uv, "pip", "install", "--python", sys.executable]
+    raise RuntimeError("neither pip nor uv is available for the current Python environment")
 
 
 def _install_vsr_source(root: Path, actions: list[str]) -> None:
@@ -322,18 +330,37 @@ def _download_blob(remote: str, blob_sha: str, size: int, target: Path) -> None:
 
 def _download_verified(remote: str, blob_sha: str, size: int, target: Path) -> None:
     url = f"{VSR_RAW_ROOT}/{remote}"
-    with urllib.request.urlopen(url, timeout=120) as response, target.open("wb") as output:
-        shutil.copyfileobj(response, output, length=1024 * 1024)
-    actual_size = target.stat().st_size
-    if actual_size != size:
-        raise RuntimeError(
-            f"downloaded model part has wrong size: {remote}: {actual_size} != {size}"
-        )
-    actual_blob = _git_blob_sha1(target)
-    if actual_blob != blob_sha:
-        raise RuntimeError(
-            f"downloaded model part failed Git blob verification: {remote}"
-        )
+    for attempt in range(5):
+        received = target.stat().st_size if target.is_file() else 0
+        if received > size:
+            target.unlink()
+            received = 0
+        if received < size:
+            headers = {"Range": f"bytes={received}-"} if received else {}
+            request = urllib.request.Request(url, headers=headers)
+            try:
+                with urllib.request.urlopen(request, timeout=120) as response:
+                    if received and response.status != 206:
+                        # The server ignored Range: restart instead of appending
+                        # a second full copy to the partial model.
+                        target.unlink()
+                        continue
+                    with target.open("ab" if received else "wb") as output:
+                        shutil.copyfileobj(response, output, length=1024 * 1024)
+            except (OSError, TimeoutError):
+                if attempt == 4:
+                    raise
+                continue
+        actual_size = target.stat().st_size if target.is_file() else 0
+        if actual_size == size and _git_blob_sha1(target) == blob_sha:
+            return
+        if actual_size == size:
+            target.unlink()
+    actual_size = target.stat().st_size if target.is_file() else 0
+    raise RuntimeError(
+        f"model part failed size/Git blob verification after retries: {remote}: "
+        f"{actual_size} != {size}"
+    )
 
 
 def _git_blob_sha1(path: Path) -> str:

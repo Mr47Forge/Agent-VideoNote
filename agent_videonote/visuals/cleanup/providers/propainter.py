@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from agent_videonote.visuals.cleanup.providers.common import (
+    backend_metrics,
     explicit_mask_path,
     output_path,
     selected_provider,
@@ -35,7 +36,7 @@ class ProPainterCleanupStrategy:
 
     def _problems(self) -> list[str]:
         problems: list[str] = []
-        for module in ("torch", "torchvision", "numpy", "cv2", "PIL", "scipy", "einops"):
+        for module in ("torch", "torchvision", "numpy", "cv2", "PIL", "scipy", "einops", "matplotlib"):
             if importlib.util.find_spec(module) is None:
                 problems.append(
                     f"Python dependency is missing from the Agent-VideoNote environment: {module}"
@@ -155,6 +156,7 @@ class ProPainterCleanupStrategy:
                 "source_preserved": True,
                 "fp16": bool(request.hints.get("fp16", True)),
                 "frame_count": len(frames),
+                "performance": backend_metrics(completed.stderr),
             },
         )
 

@@ -17,6 +17,7 @@ visual-cleanup = [
   "scipy>=1.11",
   "einops>=0.7",
   "tqdm>=4.66",
+  "matplotlib>=3.8,<4",
 ]
 
 [project.scripts]

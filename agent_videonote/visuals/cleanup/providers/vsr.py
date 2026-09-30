@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from agent_videonote.visuals.cleanup.providers.common import (
+    backend_metrics,
     explicit_mask_path,
     output_path,
     selected_provider,
@@ -28,7 +29,7 @@ class _VsrBase:
     def _dependency_problems(self) -> list[str]:
         modules = ("torch", "numpy", "cv2", "PIL")
         if self.requires_temporal_frames:
-            modules += ("torchvision",)
+            modules += ("torchvision", "matplotlib")
         return [
             f"Python dependency is missing from the Agent-VideoNote environment: {name}"
             for name in modules
@@ -112,6 +113,7 @@ class _VsrBase:
                 "single_python": sys.executable,
                 "generated_pixels": True,
                 "source_preserved": True,
+                "performance": backend_metrics(completed.stderr),
             },
         )
 

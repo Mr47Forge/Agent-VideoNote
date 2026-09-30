@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import shutil
 from pathlib import Path
 
@@ -38,3 +39,15 @@ def resolve_executable(value: str) -> str | None:
         return str(resolved) if resolved.is_file() else None
     found = shutil.which(value)
     return str(Path(found).resolve()) if found else None
+
+
+def backend_metrics(stderr: str) -> dict:
+    prefix = "AGENT_VIDEONOTE_METRICS="
+    for line in reversed(stderr.splitlines()):
+        if line.startswith(prefix):
+            try:
+                value = json.loads(line[len(prefix):])
+            except json.JSONDecodeError:
+                return {}
+            return value if isinstance(value, dict) else {}
+    return {}

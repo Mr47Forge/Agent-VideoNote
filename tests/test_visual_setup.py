@@ -1,8 +1,11 @@
 from pathlib import Path
+import io
 
 from agent_videonote.core.config import RuntimeConfig, RuntimePaths
 from agent_videonote.visuals.runtime_config import VisualRuntimeConfig
-from agent_videonote.visuals.setup import _git_blob_sha1, visual_setup
+from agent_videonote.visuals.setup import (
+    _download_verified, _git_blob_sha1, _package_installer, visual_setup,
+)
 
 
 def _config(tmp_path: Path) -> RuntimeConfig:
@@ -49,3 +52,34 @@ def test_git_blob_sha1_matches_git_object_format(tmp_path: Path) -> None:
     path.write_bytes(b"hello\n")
 
     assert _git_blob_sha1(path) == "ce013625030ba8dba906f756967f9e9ca394464a"
+
+
+def test_uv_installs_into_current_python_when_pip_is_absent(monkeypatch) -> None:
+    import sys
+    from agent_videonote.visuals import setup
+
+    monkeypatch.setattr(setup.importlib.util, "find_spec", lambda name: None)
+    monkeypatch.setattr(setup.shutil, "which", lambda name: "uv.exe")
+    assert _package_installer() == ["uv.exe", "pip", "install", "--python", sys.executable]
+
+
+def test_model_download_resumes_truncated_response_and_checks_blob(tmp_path, monkeypatch) -> None:
+    from agent_videonote.visuals import setup
+
+    calls = []
+
+    class Response(io.BytesIO):
+        def __init__(self, data: bytes, status: int):
+            super().__init__(data)
+            self.status = status
+
+    def fake_urlopen(request, timeout):
+        offset = request.get_header("Range")
+        calls.append(offset)
+        return Response(b"he", 200) if offset is None else Response(b"llo\n", 206)
+
+    monkeypatch.setattr(setup.urllib.request, "urlopen", fake_urlopen)
+    target = tmp_path / "model.part"
+    _download_verified("test/model.part", "ce013625030ba8dba906f756967f9e9ca394464a", 6, target)
+    assert target.read_bytes() == b"hello\n"
+    assert calls == [None, "bytes=2-"]

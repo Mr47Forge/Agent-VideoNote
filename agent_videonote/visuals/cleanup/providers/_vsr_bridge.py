@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import argparse
+import gc
+import json
 import sys
+import time
 import types
 from pathlib import Path
 from types import SimpleNamespace
@@ -55,17 +58,75 @@ def _load_mask(path: Path):
     return mask
 
 
+def _composite_masked(original, generated, mask):
+    """Keep every pixel outside the explicit user mask from the true target frame."""
+    import numpy as np
+
+    if original.shape != generated.shape or original.shape[:2] != mask.shape[:2]:
+        raise ValueError("inpaint output and explicit mask must match target frame dimensions")
+    return np.where(mask[:, :, None] > 0, generated, original)
+
+
+def _gpu_snapshot() -> dict[str, float | bool | None]:
+    import torch
+
+    if not torch.cuda.is_available():
+        return {"cuda_used": False, "free_mib": None, "allocated_mib": None,
+                "peak_allocated_mib": None}
+    mib = 1024 * 1024
+    return {
+        "cuda_used": True,
+        "free_mib": round(torch.cuda.mem_get_info()[0] / mib, 1),
+        "allocated_mib": round(torch.cuda.memory_allocated() / mib, 1),
+        "peak_allocated_mib": round(torch.cuda.max_memory_allocated() / mib, 1),
+    }
+
+
+def _emit_metrics(backend: str, start: float, loaded: float,
+                  inferred: float, before: dict[str, float | bool | None],
+                  after_load: dict[str, float | bool | None]) -> None:
+    import torch
+
+    peak = _gpu_snapshot()
+    gc.collect()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+    released = _gpu_snapshot()
+    payload = {
+        "backend": backend,
+        "load_seconds": round(loaded - start, 3),
+        "inference_seconds": round(inferred - loaded, 3),
+        "gpu_free_mib_before": before["free_mib"],
+        "gpu_allocated_mib_after_load": after_load["allocated_mib"],
+        "gpu_peak_allocated_mib": peak["peak_allocated_mib"],
+        "gpu_allocated_mib_after_release": released["allocated_mib"],
+        "gpu_free_mib_after": released["free_mib"],
+        "cuda_used": before["cuda_used"],
+    }
+    print("AGENT_VIDEONOTE_METRICS=" + json.dumps(payload), file=sys.stderr)
+
+
 def _lama(args) -> None:
     _bootstrap(args.vsr_root)
     from PIL import Image
     from backend.inpaint.lama_inpaint import LamaInpaint
 
+    before = _gpu_snapshot()
+    if before["cuda_used"]:
+        import torch
+        torch.cuda.reset_peak_memory_stats()
+    start = time.perf_counter()
     runner = LamaInpaint(device=_device(), model_path=str(args.model))
+    loaded = time.perf_counter()
+    after_load = _gpu_snapshot()
     image = Image.open(args.image).convert("RGB")
     mask = Image.open(args.mask).convert("L")
     result = runner.inpaint(image, mask)
+    inferred = time.perf_counter()
     args.output.parent.mkdir(parents=True, exist_ok=True)
     Image.fromarray(result).save(args.output)
+    del runner
+    _emit_metrics("lama", start, loaded, inferred, before, after_load)
 
 
 def _sttn(args) -> None:
@@ -75,12 +136,23 @@ def _sttn(args) -> None:
 
     frames = _load_frames(args.frame)
     mask = _load_mask(args.mask)
+    before = _gpu_snapshot()
+    if before["cuda_used"]:
+        import torch
+        torch.cuda.reset_peak_memory_stats()
+    start = time.perf_counter()
     runner = STTNDetInpaint(_device(), str(args.model))
+    loaded = time.perf_counter()
+    after_load = _gpu_snapshot()
     repaired = runner(frames, mask)
+    inferred = time.perf_counter()
     index = min(len(repaired) - 1, max(0, args.target_index))
     args.output.parent.mkdir(parents=True, exist_ok=True)
-    if not cv2.imwrite(str(args.output), repaired[index]):
+    protected = _composite_masked(frames[index], repaired[index], mask)
+    if not cv2.imwrite(str(args.output), protected):
         raise RuntimeError("failed to write STTN output")
+    del runner
+    _emit_metrics("sttn", start, loaded, inferred, before, after_load)
 
 
 def _propainter(args) -> None:
@@ -90,6 +162,11 @@ def _propainter(args) -> None:
 
     frames = _load_frames(args.frame)
     mask = _load_mask(args.mask)
+    before = _gpu_snapshot()
+    if before["cuda_used"]:
+        import torch
+        torch.cuda.reset_peak_memory_stats()
+    start = time.perf_counter()
     runner = PropainterInpaint(
         _device(),
         str(args.model_dir),
@@ -99,11 +176,17 @@ def _propainter(args) -> None:
     runner.neighbor_length = args.neighbor_length
     runner.ref_stride = args.ref_stride
     runner.raft_iter = args.raft_iter
+    loaded = time.perf_counter()
+    after_load = _gpu_snapshot()
     repaired = runner(frames, mask)
+    inferred = time.perf_counter()
     index = min(len(repaired) - 1, max(0, args.target_index))
     args.output.parent.mkdir(parents=True, exist_ok=True)
-    if not cv2.imwrite(str(args.output), repaired[index]):
+    protected = _composite_masked(frames[index], repaired[index], mask)
+    if not cv2.imwrite(str(args.output), protected):
         raise RuntimeError("failed to write ProPainter output")
+    del runner
+    _emit_metrics("propainter", start, loaded, inferred, before, after_load)
 
 
 def main() -> None:
