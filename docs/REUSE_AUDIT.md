@@ -11,9 +11,9 @@
 |---|---|---|---|
 | ASR primary/review | FunASR / Qwen ASR | Provider | 已接 |
 | 小区域图像修复 | OpenCV | 可选 Provider | 已接 |
-| 静态图像补全 | VSR / Big-LaMa | 外部 Provider | 已接适配层 |
-| 时序视频补全 | VSR / STTN | 外部 Provider | 已接适配层 |
-| 复杂视频补全 | sczhou/ProPainter | 外部 Provider / subprocess | 已接适配层 |
+| 静态图像补全 | VSR / Big-LaMa | 单环境 Provider，VSR 稀疏源码 | 已接安装器与适配层 |
+| 时序视频补全 | VSR / STTN | 单环境 Provider，VSR 稀疏源码 | 已接安装器与适配层 |
+| 复杂视频补全 | VSR 集成的 ProPainter（上游 sczhou/ProPainter） | 同一 Python 环境内的隔离子进程，共享同一套权重 | 已接安装器与适配层；不再单独 clone 第二份 ProPainter |
 | 固定 Logo 处理思路 | propainter-delogo | 参考其窗口化、分镜感知设计 | 不复制整仓 |
 
 所有生成式 Cleanup Provider 都要求显式 Provider + 明确 mask；默认不使用 OCR 自动删文字。
@@ -122,3 +122,17 @@
 5. 只有以上均不适合时，才进入自研。
 
 不得先写一套复杂算法，再事后搜索有没有成熟实现。
+
+
+## 视觉运行环境约束
+
+视觉清理与 ASR 共用 Agent-VideoNote 自己的 Python 虚拟环境。第三方源码目录和模型目录只是资源目录，不是 Python 环境。
+
+禁止新增：
+
+- `VSR/.venv`
+- `ProPainter/.venv`
+- 独立 conda 环境
+- 为单个 Provider 再装一套 Python
+
+需要隔离显存/崩溃边界时，可以用当前 `sys.executable` 启动子进程；这仍然是同一个 Python 环境。
