@@ -8,6 +8,7 @@ from agent_videonote.application.setup_ops import SetupOperationsMixin
 from agent_videonote.asr.catalog.service import ModelCatalogService
 from agent_videonote.application.task_ops import TaskOperationsMixin
 from agent_videonote.application.transcript_ops import TranscriptOperationsMixin
+from agent_videonote.application.visual_ops import VisualOperationsMixin
 from agent_videonote.asr.context.repository import CourseContextRepository
 from agent_videonote.asr.profiles.models import AsrProfile
 from agent_videonote.asr.providers.registry import ProviderRegistry
@@ -26,6 +27,7 @@ class ApplicationService(
     SetupOperationsMixin,
     TaskOperationsMixin,
     TranscriptOperationsMixin,
+    VisualOperationsMixin,
     DeliveryOperationsMixin,
 ):
     """Thin application facade composed from focused operation modules."""

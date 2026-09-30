@@ -24,6 +24,18 @@ def create_server():
         return facade.health()
 
     @mcp.tool()
+    def discover_visuals(task_id: str, budget_seconds: float = 120.0,
+                         config: dict[str, Any] | None = None) -> dict[str, Any]:
+        """有界扫描真实视频画面，持久化视觉候选与断点进度；返回紧凑摘要。"""
+        return facade.discover_visuals(task_id, budget_seconds, config)
+
+    @mcp.tool()
+    def get_visual_candidates(task_id: str, start: int = 0,
+                              limit: int = 20) -> dict[str, Any]:
+        """分页读取视觉候选与原视频时间戳，单次最多 50 条。"""
+        return facade.get_visual_candidates(task_id, start, limit)
+
+    @mcp.tool()
     def release_asr_role(role: str) -> dict[str, Any]:
         """结束一个 ASR 角色的驻留批次；不会删除模型文件或 Provider 配置。"""
         return facade.release_asr_role(role)
