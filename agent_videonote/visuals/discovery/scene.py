@@ -10,7 +10,7 @@ from agent_videonote.storage.artifacts import read_json, write_json_atomic
 from agent_videonote.visuals.discovery.features import (
     FRAME_BYTES, HEIGHT, PREVIEW_HEIGHT, PREVIEW_WIDTH, WIDTH,
     aligned_difference, change, decode, difference, encode, fingerprints,
-    hash_distance, preview,
+    hash_distance, preview, wide_aligned_difference,
 )
 
 
@@ -37,6 +37,8 @@ class DiscoveryConfig:
     local_peak_threshold: float = 0.15
     local_tile_threshold: float = 0.07
     perceptual_threshold: float = 0.15
+    max_pending_seconds: float = 8.0
+    min_persistent_gap: float = 30.0
 
     def __post_init__(self) -> None:
         if not 0.5 <= self.sampling_interval <= 10:
@@ -58,6 +60,10 @@ class DiscoveryConfig:
             raise ValueError("max_candidates_per_hour must be between 1 and 120")
         if not 10 <= self.chunk_seconds <= 120:
             raise ValueError("chunk_seconds must be between 10 and 120 seconds")
+        if not 4 <= self.max_pending_seconds <= 20:
+            raise ValueError("max_pending_seconds must be between 4 and 20 seconds")
+        if not 10 <= self.min_persistent_gap <= 120:
+            raise ValueError("min_persistent_gap must be between 10 and 120 seconds")
 
 
 @dataclass(frozen=True)
@@ -142,7 +148,21 @@ class SceneContentDiscovery:
                 )
             if progress.get("source_fingerprint") != fingerprint:
                 raise ValueError("visual discovery source or configuration changed; existing progress was preserved")
-            if progress.get("config") != asdict(self.config):
+            current_config = asdict(self.config)
+            previous_config = {key: value for key, value in current_config.items()
+                               if key not in ("max_pending_seconds", "min_persistent_gap")}
+            if progress.get("config") == previous_config:
+                # Completed v2 artifacts remain readable. An unfinished v2
+                # checkpoint lacks the persisted pending frame used by this
+                # revision and must be rescanned in a new artifact directory.
+                if progress.get("complete"):
+                    return self.summary(progress, manifest_path)
+                raise ValueError(
+                    "visual discovery progress predates persistent-motion support; "
+                    "existing progress and candidates were preserved. "
+                    "Start a new Visual Discovery v2 scan in a new visual artifact directory."
+                )
+            if progress.get("config") != current_config:
                 raise ValueError("visual discovery source or configuration changed; existing progress was preserved")
             if progress.get("complete"):
                 return self.summary(progress, manifest_path)
@@ -187,6 +207,11 @@ class SceneContentDiscovery:
                  and active_fraction >= self.config.min_active_fraction)
         pending = progress["pending"]
 
+        def best_frame(adjacent_delta: float) -> dict:
+            return {"timestamp": sample.second, "frame": encode(frame),
+                    "brightness": brightness, "detail": detail,
+                    "active_fraction": active_fraction, "adjacent_delta": adjacent_delta}
+
         def event(reason: str, measured, detected_at: float, stable: int) -> dict:
             return {
                 "reason": reason,
@@ -196,6 +221,9 @@ class SceneContentDiscovery:
                 "local_score": round(measured.local_score, 4),
                 "changed_region_fraction": round(measured.changed_region_fraction, 4),
                 "detected_at": detected_at, "stable": stable,
+                "started_at": sample.second, "start_frame": encode(frame),
+                "best_frame": best_frame(delta),
+                "best_changed_frame": None,
             }
 
         if not valid:
@@ -207,11 +235,36 @@ class SceneContentDiscovery:
                 "global_score": 0.0, "local_score": 0.0,
                 "changed_region_fraction": 0.0,
                 "detected_at": sample.second, "stable": 0,
+                "started_at": sample.second, "start_frame": encode(frame),
+                "best_frame": best_frame(delta),
+                "best_changed_frame": None,
             }
-        elif delta >= self.config.scene_threshold:
-            progress["pending"] = event("scene_change", change(previous, frame),
-                                         sample.second, 0)
         elif pending is not None:
+            # A new scene score during continuous zoom/scroll must not restart
+            # the clock indefinitely. Keep the clearest low-motion frame in a
+            # bounded pending window, including across chunk checkpoints.
+            pending.setdefault("started_at", pending["detected_at"])
+            pending.setdefault("start_frame", encode(previous))
+            prior_best = pending.get("best_frame")
+            current_best = best_frame(delta)
+            if (prior_best is None or
+                    (detail - 0.08 * delta) >=
+                    (prior_best["detail"] - 0.08 * prior_best["adjacent_delta"])):
+                pending["best_frame"] = current_best
+            anchor = reference or decode(pending["start_frame"])
+            anchor_change = change(anchor, frame,
+                                   active_threshold=self.config.local_tile_threshold)
+            content_changed = (
+                anchor_change.global_score >= self.config.content_threshold
+                or (anchor_change.local_score >= self.config.local_content_threshold
+                    and anchor_change.max_local_score >= self.config.local_peak_threshold
+                    and anchor_change.largest_region >= 2))
+            prior_changed = pending.get("best_changed_frame")
+            if content_changed and (prior_changed is None or
+                                    (detail - 0.08 * delta) >=
+                                    (prior_changed["detail"] -
+                                     0.08 * prior_changed["adjacent_delta"])):
+                pending["best_changed_frame"] = current_best
             if delta <= self.config.stability_threshold:
                 pending["stable"] += 1
                 if pending["stable"] >= self.config.stability_window:
@@ -221,6 +274,48 @@ class SceneContentDiscovery:
                     progress["reference_frame"] = encode(frame)
             else:
                 pending["stable"] = 0
+            if (progress["pending"] is not None and
+                    sample.second - pending["started_at"] >= self.config.max_pending_seconds):
+                anchor = reference or decode(pending["start_frame"])
+                chosen = pending.get("best_changed_frame") or pending["best_frame"]
+                chosen_pixels = decode(chosen["frame"])
+                measured = change(anchor, chosen_pixels,
+                                  active_threshold=self.config.local_tile_threshold)
+                changed = (measured.global_score >= self.config.content_threshold
+                           or (measured.local_score >= self.config.local_content_threshold
+                               and measured.max_local_score >= self.config.local_peak_threshold
+                               and measured.largest_region >= 2))
+                if not changed:
+                    # The sharpest frame may be the original page. A later
+                    # readable page still deserves the fallback opportunity.
+                    current_change = change(anchor, frame,
+                                            active_threshold=self.config.local_tile_threshold)
+                    if (current_change.global_score >= self.config.content_threshold
+                            or (current_change.local_score >= self.config.local_content_threshold
+                                and current_change.max_local_score >= self.config.local_peak_threshold
+                                and current_change.largest_region >= 2)):
+                        chosen = current_best
+                        chosen_pixels = frame
+                        measured = current_change
+                        changed = True
+                last = progress["candidates"][-1] if progress["candidates"] else None
+                enough_gap = (last is None or
+                              chosen["timestamp"] - last["timestamp"] >=
+                              self.config.min_persistent_gap)
+                if changed and enough_gap:
+                    fallback = {**pending, "reason": "persistent_content_change",
+                                "score": round(measured.global_score, 4),
+                                "global_score": round(measured.global_score, 4),
+                                "local_score": round(measured.local_score, 4),
+                                "changed_region_fraction": round(measured.changed_region_fraction, 4)}
+                    self._accept(progress, FrameSample(chosen["timestamp"], chosen_pixels),
+                                 source, image_dir, fallback, chosen["brightness"],
+                                 chosen["detail"], chosen["active_fraction"])
+                    progress["reference_frame"] = chosen["frame"]
+                progress["pending"] = None
+        elif delta >= self.config.scene_threshold:
+            progress["pending"] = event("scene_change", change(previous, frame),
+                                         sample.second, 0)
         elif reference is not None and delta <= self.config.stability_threshold:
             measured = change(reference, frame,
                               active_threshold=self.config.local_tile_threshold)
@@ -248,28 +343,37 @@ class SceneContentDiscovery:
             distance = hash_distance(fingerprint["hashes"], sample_hashes)
             prior = decode(fingerprint["preview"])
             pixel_difference = difference(prior, sample_preview)
-            if distance > 0.25 or pixel_difference > 0.16:
+            if distance > 0.28 or pixel_difference > 0.28:
                 continue
             measured = change(prior, sample_preview, width=PREVIEW_WIDTH,
                               height=PREVIEW_HEIGHT,
                               active_threshold=self.config.local_tile_threshold)
             local_text_change = (measured.local_score >= self.config.local_content_threshold
                                  and measured.largest_region >= 2
-                                 and measured.changed_region_fraction < 0.50)
+                                 and (measured.changed_region_fraction < 0.50
+                                      or (measured.changed_region_fraction <= 0.55
+                                          and measured.local_score >=
+                                          measured.global_score * 2.5)))
             similar_pixels = pixel_difference <= self.config.similarity_threshold
             similar_structure = (distance <= self.config.perceptual_threshold
                                  and pixel_difference <= 0.16)
             aligned = aligned_difference(prior, sample_preview)
             similar_zoom = aligned <= 0.03
+            wide_zoom = False
+            if (not local_text_change and distance <= 0.26
+                    and measured.changed_region_fraction >= 0.50
+                    and pixel_difference > self.config.similarity_threshold):
+                wide_zoom = wide_aligned_difference(prior, sample_preview) <= 0.075
             if (local_text_change and not similar_zoom) or not (
-                    similar_pixels or similar_structure or similar_zoom):
+                    similar_pixels or similar_structure or similar_zoom or wide_zoom):
                 continue
             rank = min(pixel_difference, aligned) + distance / 2
             if rank < best_rank:
                 best = candidate
                 best_hash = distance
                 best_difference = pixel_difference
-                best_kind = "zoom_or_pan" if pixel_difference > self.config.similarity_threshold else "repeat"
+                best_kind = ("zoom_or_pan" if pixel_difference > self.config.similarity_threshold
+                             else "repeat")
                 best_rank = rank
         return best, best_hash, best_difference, best_kind
 

@@ -56,6 +56,35 @@ def aligned_difference(left: bytes, right: bytes) -> float:
     return best
 
 
+def wide_aligned_difference(left: bytes, right: bytes) -> float:
+    """Candidate-only comparison for accumulated zoom and modest pan.
+
+    Compare the informative central area at several scales. The caller must
+    also check the unaligned changed regions, so altered text is not hidden by
+    a good match on the unchanged page template.
+    """
+    if len(left) != PREVIEW_WIDTH * PREVIEW_HEIGHT or len(right) != len(left):
+        raise ValueError("mismatched visual preview dimensions")
+    best = 1.0
+    for scale in (0.55, 0.65, 0.75, 0.85, 1.0, 1.15, 1.3, 1.5, 1.75):
+        for shift_y in (-3, 0, 3):
+            for shift_x in (-4, 0, 4):
+                total = count = 0
+                for y in range(6, PREVIEW_HEIGHT - 6):
+                    yy = round((y - 14.5) * scale + 14.5 + shift_y)
+                    if not 0 <= yy < PREVIEW_HEIGHT:
+                        continue
+                    for x in range(7, PREVIEW_WIDTH - 7):
+                        xx = round((x - 19.5) * scale + 19.5 + shift_x)
+                        if 0 <= xx < PREVIEW_WIDTH:
+                            total += abs(left[y * PREVIEW_WIDTH + x]
+                                         - right[yy * PREVIEW_WIDTH + xx])
+                            count += 1
+                if count >= 200:
+                    best = min(best, total / (count * 255))
+    return best
+
+
 def change(left: bytes, right: bytes, *, width: int = WIDTH,
            height: int = HEIGHT, active_threshold: float = 0.07) -> Change:
     if len(left) != len(right) or len(left) != width * height:

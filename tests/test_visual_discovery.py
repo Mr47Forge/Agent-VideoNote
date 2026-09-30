@@ -57,6 +57,35 @@ def shifted_zoom(pixels: bytes) -> bytes:
     return bytes(result)
 
 
+def zoom(pixels: bytes, factor: float) -> bytes:
+    result = bytearray(len(pixels))
+    for y in range(90):
+        for x in range(160):
+            source_x = min(159, max(0, round((x - 80) / factor + 80)))
+            source_y = min(89, max(0, round((y - 45) / factor + 45)))
+            result[y * 160 + x] = pixels[source_y * 160 + source_x]
+    return bytes(result)
+
+
+def moving(pixels: bytes, index: int) -> bytes:
+    offset = 30 if index % 2 else 0
+    return bytes(min(255, value + offset) for value in pixels)
+
+
+def portrait_page() -> bytes:
+    pixels = bytearray([210] * (160 * 90))
+    for y in range(90):
+        for x in range(160):
+            head = ((x - 80) / 22) ** 2 + ((y - 37) / 27) ** 2 < 1
+            hair = head and y < 28
+            shoulders = 61 <= y < 90 and abs(x - 80) < 35 + (y - 61)
+            if head or shoulders:
+                pixels[y * 160 + x] = 35 if hair else (130 if head else 65)
+            if head and 31 <= y <= 33 and x in (72, 88):
+                pixels[y * 160 + x] = 20
+    return bytes(pixels)
+
+
 class FakeSampler:
     def __init__(self, frames: list[bytes]) -> None:
         self.frames = frames
@@ -216,6 +245,29 @@ def test_unmarked_v2_progress_remains_resumable(tmp_path, complete):
     assert sampler.starts == (starts_before if complete else starts_before + [10.0])
 
 
+@pytest.mark.parametrize("complete", [False, True])
+def test_pre_motion_v2_progress_is_preserved(tmp_path, complete):
+    frames = [A, A, A, B, B, B]
+    sampler = FakeSampler(frames)
+    first, _, _ = run(tmp_path, frames, budget=120 if complete else 10,
+                      sampler=sampler)
+    manifest = Path(first["artifact_path"])
+    progress = read_json(manifest)
+    progress["config"].pop("max_pending_seconds")
+    progress["config"].pop("min_persistent_gap")
+    manifest.write_text(json.dumps(progress), encoding="utf-8")
+    before = manifest.read_bytes()
+    starts_before = list(sampler.starts)
+
+    if complete:
+        assert run(tmp_path, frames, sampler=sampler)[0]["candidate_count"] == 2
+    else:
+        with pytest.raises(ValueError, match="predates persistent-motion support"):
+            run(tmp_path, frames, budget=10, sampler=sampler)
+    assert manifest.read_bytes() == before
+    assert sampler.starts == starts_before
+
+
 def test_candidate_page_is_bounded(tmp_path):
     result, _, _ = run(tmp_path, [A, A, A])
     with pytest.raises(ValueError):
@@ -258,6 +310,48 @@ def test_small_zoom_does_not_create_many_candidates(tmp_path):
     assert result["candidate_count"] == 1
     assert result["raw_candidate_count"] == 2
     assert result["deduplicated_count"] == 1
+
+
+def test_persistent_motion_produces_bounded_candidates(tmp_path):
+    frames = [moving(A, i) for i in range(60)]
+    deltas = [sum(abs(a - b) for a, b in zip(left, right)) / (len(left) * 255)
+              for left, right in zip(frames, frames[1:])]
+    assert all(0.055 < delta < 0.18 for delta in deltas)
+    result, _, _ = run(tmp_path, frames)
+    items = read_candidates(Path(result["artifact_path"]), start=0, limit=50)["candidates"]
+    assert result["raw_candidate_count"] > 0
+    assert any(item["reason"] == "persistent_content_change" for item in items)
+    assert result["raw_candidate_count"] <= 4  # at most once per 30 seconds
+
+
+def test_pending_motion_survives_restart(tmp_path):
+    frames = [moving(A, i) for i in range(12)]
+    config = DiscoveryConfig(chunk_seconds=10, max_pending_seconds=12)
+    sampler = FakeSampler(frames)
+    first, _, _ = run(tmp_path, frames, config=config, budget=10, sampler=sampler)
+    saved = read_json(first["artifact_path"])["pending"]
+    assert saved["started_at"] == 0
+    assert saved["best_frame"] is not None
+    second, _, _ = run(tmp_path, frames, config=config, budget=20, sampler=sampler)
+    assert second["candidate_count"] >= 1
+    assert sampler.starts[:2] == [0.0, 10.0]
+
+
+def test_gradual_long_zoom_matches_history(tmp_path):
+    base = portrait_page()
+    frames = [base] * 3 + [zoom(base, 1 + i * 0.025) for i in range(1, 28)]
+    result, _, _ = run(tmp_path, frames)
+    assert result["raw_candidate_count"] > 1
+    assert result["candidate_count"] <= 2
+
+
+def test_zoomed_page_with_new_text_remains_distinct(tmp_path):
+    base = narrow_page()
+    changed = narrow_page(changed=True)
+    frames = [base] * 3 + [zoom(base, 1.12)] * 4 + [zoom(changed, 1.12)] * 4
+    result, _, _ = run(tmp_path, frames, config=DiscoveryConfig(min_candidate_gap=2))
+    items = read_candidates(Path(result["artifact_path"]), start=0, limit=20)["candidates"]
+    assert any(item["reason"] == "local_content_change" for item in items[1:])
 
 
 def test_application_discovery_preserves_transcript_and_task_stage(tmp_path, monkeypatch):
