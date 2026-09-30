@@ -22,7 +22,7 @@ ASR 架构不绑定任何具体模型。视觉 Cleanup 同样采用 Provider / A
 | OpenCV 4.5+ | 小面积图像修复 / 视觉基础算子 | Apache-2.0 | 若实际部署旧于 4.5，需按对应旧版 BSD-3-Clause 重新登记 | `opencv` Cleanup Provider 已适配 |
 | YaoFANGUK/video-subtitle-remover (VSR) | LaMa / STTN 外部修复后端参考与运行体 | Apache-2.0 | VSR 内部各模型权重仍需分别核验；本项目不启用“检测所有文字后自动删除” | `vsr-lama` / `vsr-sttn` 外部 Provider 已适配 |
 | researchmm/STTN | 视频时序补全上游 | MIT | 预训练权重来源仍需单独记录 | 通过 VSR 适配，暂不复制官方仓库 |
-| sczhou/ProPainter | 视频时序补全上游 | NTU S-Lab License 1.0，**仅非商业使用** | 商业用途需另行获得许可；代码和权重都受其单独许可证约束 | 仅外部 Provider；当前非商业自用可评估 |
+| sczhou/ProPainter | 视频时序补全上游 | NTU S-Lab License 1.0，**仅非商业使用** | VSR 内集成实现与相关权重仍受 ProPainter 上游非商业限制；不能因 VSR 为 Apache-2.0 就忽略该限制 | 通过固定 VSR revision 的集成实现复用，不再单独 clone 第二份源码/权重 |
 | QuantumWars/propainter-delogo | 固定 Logo 的窗口化、分镜感知处理参考 | MIT；其调用的 ProPainter 许可证独立 | 不能因 wrapper 是 MIT 就忽略 ProPainter 的非商业限制 | 采用“外部调用 + 窗口化思路”，不复制整仓 |
 | MCG-NKU/E2FGVI | 视频补全候选 | CC BY-NC 4.0 | 非商业限制；与 ProPainter 能力重叠 | 暂不接入，避免重复维护 |
 
@@ -35,7 +35,7 @@ ASR 架构不绑定任何具体模型。视觉 Cleanup 同样采用 Provider / A
 - PyTorch 官方 LICENSE 为 BSD 风格三条款。
 - FFmpeg 官方许可证说明：默认主体 LGPL-2.1+，启用 GPL 部件后构建会转为 GPL-2.0+。
 - OpenCV 官方许可证说明：4.5.0 及以上为 Apache-2.0，旧版为 BSD-3-Clause。
-- VSR 官方仓库当前标 Apache-2.0。
+- VSR 官方仓库当前标 Apache-2.0；本项目只稀疏获取其 LaMa/STTN/ProPainter 推理相关源码，不安装 GUI、PaddleOCR 等无关部分。
 - STTN 官方仓库当前为 MIT。
 - ProPainter 官方 LICENSE/README 明确为 NTU S-Lab License 1.0，非商业使用。
 - propainter-delogo 自身为 MIT，但明确声明 ProPainter 和权重许可证独立。
@@ -58,3 +58,12 @@ ASR 架构不绑定任何具体模型。视觉 Cleanup 同样采用 Provider / A
 - 不因为某模型当前效果好，就把模型名写进 workflow、task state 或 MCP 对外协议。
 - 不把某个社区转换模型的许可证，自动视为官方原模型许可证。
 - 不把 OCR 检测到的课程文字、聊天文字自动当作待删除 mask。
+
+
+## 视觉 Cleanup 单环境约束
+
+- VSR / LaMa / STTN / ProPainter 不创建独立 Python/conda/venv。
+- 全部 Provider 使用 Agent-VideoNote 当前 `sys.executable`。
+- 第三方源码位于运行数据目录，不直接 vendor 到本仓库。
+- Big-LaMa、STTN、ProPainter 权重按固定 VSR revision 下载并做 Git blob 校验。
+- ProPainter 直接复用 VSR 已集成的推理实现与同一套权重，不额外保存官方仓库第二份副本。

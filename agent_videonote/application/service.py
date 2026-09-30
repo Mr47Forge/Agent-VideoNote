@@ -48,6 +48,7 @@ class ApplicationService(
         startup_warnings: tuple[str, ...] = (),
         asr_runtime: AsrRuntimeConfig | None = None,
         asr_config_path: Path | None = None,
+        visual_config_path: Path | None = None,
         cleanup_registry: CleanupRegistry | None = None,
     ):
         self.config = config
@@ -61,4 +62,5 @@ class ApplicationService(
         self.startup_warnings = tuple(startup_warnings)
         self.asr_runtime = asr_runtime
         self.asr_config_path = asr_config_path
+        self.visual_config_path = visual_config_path
         self.cleanup_registry = cleanup_registry or build_default_cleanup_registry()

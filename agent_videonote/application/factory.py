@@ -22,6 +22,7 @@ from agent_videonote.storage.json_store import JsonTaskStore
 from agent_videonote.tasks.service import TaskService
 from agent_videonote.visuals.cleanup.factory import build_default_cleanup_registry
 from agent_videonote.visuals.cleanup.registry import CleanupRegistry
+from agent_videonote.visuals.runtime_config import VisualRuntimeConfig
 from agent_videonote.visuals.service import VisualService
 from agent_videonote.workflow.engine import WorkflowEngine
 
@@ -52,7 +53,15 @@ def build_runtime(
     workflow = WorkflowEngine(store)
     media = FFmpegBackend(runtime_config)
     asr_registry = ProviderRegistry()
-    cleanup_registry = build_default_cleanup_registry()
+    visual_runtime_path = runtime_config.paths.context / "visual-runtime.json"
+    try:
+        visual_runtime = VisualRuntimeConfig.load(visual_runtime_path)
+    except (OSError, ValueError) as exc:
+        visual_runtime = VisualRuntimeConfig.disabled()
+        startup_warnings = tuple(startup_warnings) + (
+            f"Visual runtime config disabled: {exc}",
+        )
+    cleanup_registry = build_default_cleanup_registry(visual_runtime)
     contexts = CourseContextRepository(runtime_config.paths.context / "courses")
 
     provider_warnings = register_provider_specs(
@@ -73,6 +82,7 @@ def build_runtime(
         startup_warnings=all_startup_warnings,
         asr_runtime=AsrRuntimeConfig(profile=profile, providers=provider_specs),
         asr_config_path=asr_config_path,
+        visual_config_path=visual_runtime_path,
         cleanup_registry=cleanup_registry,
     )
     visuals = VisualService(tasks, cleanup_registry)

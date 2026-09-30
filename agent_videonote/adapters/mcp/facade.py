@@ -21,6 +21,9 @@ class McpToolFacade:
     def asr_setup_plan(self, search_dirs: list[str] | None = None) -> dict[str, Any]:
         return self.application.asr_setup_plan(search_dirs=search_dirs)
 
+    def visual_setup(self, apply: bool = False) -> dict[str, Any]:
+        return self.application.visual_setup(apply=apply)
+
     def asr_models(
         self,
         role: str | None = None,

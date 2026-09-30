@@ -70,6 +70,11 @@ def create_server():
         return facade.asr_setup_plan(search_dirs=search_dirs)
 
     @mcp.tool()
+    def visual_setup(apply: bool = False) -> dict[str, Any]:
+        """安装或检查视觉清理运行体；只使用当前 Agent-VideoNote Python 环境，不创建第二个 venv。"""
+        return facade.visual_setup(apply=apply)
+
+    @mcp.tool()
     def asr_models(
         role: str | None = None,
         priority: str = "balanced",

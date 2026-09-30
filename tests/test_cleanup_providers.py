@@ -1,15 +1,11 @@
 from pathlib import Path
+import sys
 
 from agent_videonote.visuals.cleanup.factory import build_default_cleanup_registry
-from agent_videonote.visuals.cleanup.providers.propainter import (
-    ProPainterCleanupStrategy,
-    ProPainterConfig,
-)
-from agent_videonote.visuals.cleanup.providers.vsr import (
-    VsrLamaCleanupStrategy,
-    VsrProviderConfig,
-)
+from agent_videonote.visuals.cleanup.providers.propainter import ProPainterCleanupStrategy
+from agent_videonote.visuals.cleanup.providers.vsr import VsrLamaCleanupStrategy
 from agent_videonote.visuals.cleanup.types import CleanupRequest
+from agent_videonote.visuals.runtime_config import VisualRuntimeConfig
 
 
 def test_default_registry_exposes_provider_adapters() -> None:
@@ -25,6 +21,8 @@ def test_default_registry_exposes_provider_adapters() -> None:
     } <= providers.keys()
     assert providers["vsr-lama"]["automatic_text_removal"] is False
     assert providers["propainter"]["automatic_text_removal"] is False
+    assert providers["vsr-lama"]["single_python"] == sys.executable
+    assert providers["propainter"]["single_python"] == sys.executable
 
 
 def test_generated_pixel_provider_requires_explicit_selection(tmp_path: Path) -> None:
@@ -43,17 +41,16 @@ def test_generated_pixel_provider_requires_explicit_selection(tmp_path: Path) ->
     assert result.detail["attempts"] == []
 
 
-def test_vsr_lama_reports_unavailable_without_downloading(tmp_path: Path) -> None:
+def test_vsr_lama_reports_unavailable_without_model(tmp_path: Path) -> None:
     root = tmp_path / "vsr"
     (root / "backend" / "inpaint").mkdir(parents=True)
     mask = tmp_path / "mask.png"
     mask.write_bytes(b"mask")
-    strategy = VsrLamaCleanupStrategy(VsrProviderConfig(
-        root=root,
-        python_bin="definitely-not-a-real-python-executable",
-        lama_model=tmp_path / "missing-lama.pt",
-        sttn_model=None,
-    ))
+    runtime = VisualRuntimeConfig(
+        vsr_root=str(root),
+        lama_model=str(tmp_path / "missing-lama.pt"),
+    )
+    strategy = VsrLamaCleanupStrategy(runtime)
 
     result = strategy.clean(CleanupRequest(
         image_path=str(tmp_path / "candidate.jpg"),
@@ -63,28 +60,24 @@ def test_vsr_lama_reports_unavailable_without_downloading(tmp_path: Path) -> Non
 
     assert result.status == "unresolved"
     assert result.detail["unresolved_reason"] == "provider_unavailable"
+    assert "Big-LaMa model not found" in result.detail["provider_reason"]
 
 
-def test_propainter_refuses_missing_weights_instead_of_auto_downloading(tmp_path: Path) -> None:
-    root = tmp_path / "ProPainter"
-    root.mkdir()
-    (root / "inference_propainter.py").write_text("print('must not run')", encoding="utf-8")
-    mask = tmp_path / "mask.png"
-    mask.write_bytes(b"mask")
-    frames = []
-    for index in range(3):
-        frame = tmp_path / f"{index}.png"
-        frame.write_bytes(b"frame")
-        frames.append(str(frame))
+def test_propainter_reuses_vsr_source_and_shared_weights(tmp_path: Path) -> None:
+    root = tmp_path / "vsr"
+    (root / "backend" / "inpaint").mkdir(parents=True)
+    (root / "backend" / "inpaint" / "propainter_inpaint.py").write_text(
+        "# fake", encoding="utf-8"
+    )
+    model_dir = tmp_path / "models" / "propainter"
+    model_dir.mkdir(parents=True)
+    runtime = VisualRuntimeConfig(
+        vsr_root=str(root),
+        propainter_model_dir=str(model_dir),
+    )
+    strategy = ProPainterCleanupStrategy(runtime)
+    capabilities = strategy.capabilities()
 
-    strategy = ProPainterCleanupStrategy(ProPainterConfig(root=root, python_bin="python"))
-    result = strategy.clean(CleanupRequest(
-        image_path=frames[1],
-        source_video=str(tmp_path / "video.mp4"),
-        nearby_frame_paths=tuple(frames),
-        hints={"provider": "propainter", "mask_path": str(mask)},
-    ))
-
-    assert result.status == "unresolved"
-    assert result.detail["unresolved_reason"] == "provider_unavailable"
-    assert "automatic download is disabled" in result.detail["provider_reason"]
+    assert capabilities["single_python"] == sys.executable
+    assert "ProPainter weights are missing" in capabilities["reason"]
+    assert "inference_propainter.py" not in capabilities["reason"]

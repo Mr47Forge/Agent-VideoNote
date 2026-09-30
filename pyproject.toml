@@ -11,7 +11,11 @@ mcp = [
   "mcp>=2,<3",
 ]
 visual-cleanup = [
-  "opencv-python-headless>=4.5,<5",
+  "opencv-python-headless>=4.11,<5",
+  "Pillow>=10",
+  "scipy>=1.11",
+  "einops>=0.7",
+  "tqdm>=4.66",
 ]
 
 [project.scripts]
