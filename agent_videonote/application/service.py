@@ -17,6 +17,8 @@ from agent_videonote.core.config import RuntimeConfig
 from pathlib import Path
 from agent_videonote.media.interfaces import MediaBackend
 from agent_videonote.tasks.service import TaskService
+from agent_videonote.visuals.cleanup.factory import build_default_cleanup_registry
+from agent_videonote.visuals.cleanup.registry import CleanupRegistry
 from agent_videonote.workflow.engine import WorkflowEngine
 
 
@@ -46,6 +48,7 @@ class ApplicationService(
         startup_warnings: tuple[str, ...] = (),
         asr_runtime: AsrRuntimeConfig | None = None,
         asr_config_path: Path | None = None,
+        cleanup_registry: CleanupRegistry | None = None,
     ):
         self.config = config
         self.tasks = tasks
@@ -58,3 +61,4 @@ class ApplicationService(
         self.startup_warnings = tuple(startup_warnings)
         self.asr_runtime = asr_runtime
         self.asr_config_path = asr_config_path
+        self.cleanup_registry = cleanup_registry or build_default_cleanup_registry()

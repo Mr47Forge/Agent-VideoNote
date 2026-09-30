@@ -73,6 +73,7 @@ def build_runtime(
         startup_warnings=all_startup_warnings,
         asr_runtime=AsrRuntimeConfig(profile=profile, providers=provider_specs),
         asr_config_path=asr_config_path,
+        cleanup_registry=cleanup_registry,
     )
     visuals = VisualService(tasks, cleanup_registry)
 

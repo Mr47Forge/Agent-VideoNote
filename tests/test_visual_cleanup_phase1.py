@@ -1,0 +1,280 @@
+import json
+from pathlib import Path
+
+import pytest
+
+from agent_videonote.application.service import ApplicationService
+from agent_videonote.asr.context.repository import CourseContextRepository
+from agent_videonote.asr.profiles.models import AsrProfile
+from agent_videonote.asr.providers.registry import ProviderRegistry
+from agent_videonote.core.config import RuntimeConfig, RuntimePaths
+from agent_videonote.core.types import Artifact, SourceIdentity
+from agent_videonote.media.types import MediaInfo
+from agent_videonote.storage.artifacts import read_json, write_json_atomic
+from agent_videonote.storage.json_store import JsonTaskStore
+from agent_videonote.tasks.service import TaskService
+from agent_videonote.visuals.cleanup.factory import build_default_cleanup_registry
+from agent_videonote.visuals.cleanup.source_search import (
+    SourceFrameCleanup, SourceSearchConfig, select_clean_frame,
+)
+from agent_videonote.visuals.discovery.features import encode, fingerprints, preview
+from agent_videonote.visuals.discovery.scene import FrameSample
+from agent_videonote.workflow.engine import WorkflowEngine
+
+
+def page(*, added_text=False):
+    pixels = bytearray([220] * (160 * 90))
+    for y in range(12, 87):
+        for x in range(20, 140):
+            if y % 7 in (0, 1) and x % 11 < 8:
+                pixels[y * 160 + x] = 35
+            if added_text and 35 <= y < 56 and 60 <= x < 125:
+                if y % 4 in (0, 1) and x % 6 < 4:
+                    pixels[y * 160 + x] = 20
+    return bytes(pixels)
+
+
+def overlay(pixels):
+    result = bytearray(pixels)
+    for y in range(74, 88):
+        for x in range(10, 150):
+            result[y * 160 + x] = 4
+    return bytes(result)
+
+
+class FakeSampler:
+    def __init__(self, frames):
+        self.frames = frames
+        self.calls = []
+        self.counts = []
+
+    def sample(self, source, start, duration, interval):
+        self.calls.append((start, duration, interval))
+        result = [FrameSample(float(second), self.frames[second])
+                  for second in sorted(self.frames)
+                  if start <= second < start + duration]
+        self.counts.append(len(result))
+        return result
+
+
+class FakeMedia:
+    def __init__(self, frames):
+        self.frames = frames
+        self.extracted = []
+
+    def probe(self, source):
+        return MediaInfo(path=str(source), duration=11.0, format_name="fake", streams=())
+
+    def extract_frame(self, source, output, *, second):
+        path = Path(output)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(self.frames[int(second)])
+        self.extracted.append(second)
+        return path
+
+
+def candidate(frame, image_path, *, second=5.0):
+    return {
+        "candidate_id": "vc-0001", "timestamp": second,
+        "image_path": str(image_path),
+        "fingerprint": {"hashes": fingerprints(frame),
+                        "preview": encode(preview(frame))},
+        "source_frame": {"video": "", "timestamp": second},
+    }
+
+
+def clean_direct(tmp_path, frames):
+    source = tmp_path / "video.mp4"
+    source.write_bytes(b"source")
+    original = tmp_path / "candidate.jpg"
+    original.write_bytes(frames[5])
+    media = FakeMedia(frames)
+    sampler = FakeSampler(frames)
+    cleaner = SourceFrameCleanup(media, sampler, build_default_cleanup_registry())
+    result = cleaner.clean(
+        source=source, candidate=candidate(frames[5], original), duration=11,
+        temp_dir=tmp_path / "temp", output_path=tmp_path / "clean.jpg",
+    )
+    return result, media, sampler
+
+
+def test_transient_overlay_is_replaced_with_real_clean_frame(tmp_path):
+    clean = page()
+    frames = {second: overlay(clean) if second == 5 else clean for second in range(11)}
+    result, media, sampler = clean_direct(tmp_path, frames)
+    assert result.resolved
+    assert result.strategy_id == "source-frame-replacement"
+    assert result.detail["replacement_timestamp"] in (0, 1, 2, 3, 4, 6, 7, 8, 9, 10)
+    assert Path(result.output_path).read_bytes() == clean
+    assert len(sampler.calls) == 2
+    assert sum(sampler.counts) <= 16
+    assert not list((tmp_path / "temp").glob("*.jpg"))
+    assert len(media.extracted) == 1
+
+
+def test_changed_page_cannot_replace_candidate(tmp_path):
+    first = page()
+    second = bytes(255 - value for value in first)
+    frames = {index: first if index <= 5 else second for index in range(11)}
+    result, media, _ = clean_direct(tmp_path, frames)
+    assert not result.resolved
+    assert result.detail["unresolved_reason"] == "no_two_sided_same_state_witness"
+    assert not media.extracted
+
+
+def test_changed_chat_text_is_not_treated_as_disappearing_ad(tmp_path):
+    original = page()
+    with_text = page(added_text=True)
+    frames = {second: with_text if second == 5 else original for second in range(11)}
+    result, media, _ = clean_direct(tmp_path, frames)
+    assert not result.resolved
+    assert not media.extracted
+
+
+def test_changed_chat_bubble_is_not_treated_as_opaque_overlay(tmp_path):
+    original = page()
+    changed = bytearray(original)
+    for y in range(35, 55):
+        for x in range(45, 125):
+            changed[y * 160 + x] = 100
+            if y % 5 in (0, 1) and x % 7 < 5:
+                changed[y * 160 + x] = 240
+    frames = {second: bytes(changed) if second == 5 else original
+              for second in range(11)}
+    result, media, _ = clean_direct(tmp_path, frames)
+    assert not result.resolved
+    assert not media.extracted
+
+
+def test_no_clean_frame_is_unresolved(tmp_path):
+    covered = overlay(page())
+    frames = {second: covered for second in range(11)}
+    result, media, _ = clean_direct(tmp_path, frames)
+    assert not result.resolved
+    assert result.detail["unresolved_reason"] == "no_verified_clean_frame"
+    assert not media.extracted
+
+
+def test_prefers_more_complete_stable_witness():
+    clearer = page()
+    softened = bytearray(clearer)
+    for y in range(12, 32):
+        for x in range(21, 139):
+            index = y * 160 + x
+            softened[index] = (clearer[index - 1] + clearer[index] + clearer[index + 1]) // 3
+    dirty = overlay(clearer)
+    nearby = [FrameSample(3.0, bytes(softened)), FrameSample(7.0, clearer)]
+    result, _ = select_clean_frame(FrameSample(5.0, dirty), nearby, SourceSearchConfig())
+    assert result is not None
+    assert result.timestamp == 7.0
+
+
+def build_app(tmp_path, frames):
+    root = tmp_path / "data"
+    paths = RuntimePaths(root, root / "tasks", root / "models",
+                         root / "context", root / "backups")
+    store = JsonTaskStore(paths.tasks)
+    tasks = TaskService(store)
+    workflow = WorkflowEngine(store)
+    media = FakeMedia(frames)
+    app = ApplicationService(
+        config=RuntimeConfig(paths), tasks=tasks, workflow=workflow,
+        media=media, asr_registry=ProviderRegistry(),
+        asr_profile=AsrProfile(roles={"primary": None, "review": None}),
+        contexts=CourseContextRepository(paths.context / "courses"),
+    )
+    return app, media
+
+
+def prepared_task(app, tmp_path, frames):
+    source = tmp_path / "source.mp4"
+    source.write_bytes(b"source video")
+    task_id = app.prepare(source)["task"]["task_id"]
+    transcript = app.task_dir(task_id) / "transcript" / "transcript.json"
+    transcript.parent.mkdir(parents=True)
+    transcript.write_bytes(b'{"text":"keep"}')
+    app.tasks.register_artifact(task_id, "transcript",
+                                Artifact(kind="transcript", path=str(transcript)))
+    app.workflow.complete_current(task_id, evidence={"transcript": str(transcript)})
+    image = app.task_dir(task_id) / "visual" / "candidates" / "vc-0001-5.000.jpg"
+    image.parent.mkdir(parents=True)
+    image.write_bytes(frames[5])
+    item = candidate(frames[5], image)
+    item["source_frame"]["video"] = str(source.resolve())
+    manifest = app.task_dir(task_id) / "visual" / "discovery" / "progress.json"
+    write_json_atomic(manifest, {
+        "source_path": str(source.resolve()),
+        "source_fingerprint": SourceIdentity.from_path(source).fingerprint,
+        "duration": 11, "candidates": [item], "complete": True,
+    })
+    app.tasks.register_artifact(task_id, "visual_discovery",
+                                Artifact(kind="visual_discovery", path=str(manifest)))
+    return task_id, image, manifest, transcript
+
+
+def test_application_persists_result_and_reuses_it_after_restart(tmp_path, monkeypatch):
+    clean = page()
+    frames = {second: overlay(clean) if second == 5 else clean for second in range(11)}
+    app, media = build_app(tmp_path, frames)
+    task_id, _, _, transcript = prepared_task(app, tmp_path, frames)
+    sampler = FakeSampler(frames)
+    monkeypatch.setattr("agent_videonote.application.visual_ops.FFmpegFrameSampler",
+                        lambda _bin: sampler)
+
+    first = app.clean_visual_candidate(task_id, "vc-0001")
+    assert first["resolved"]
+    assert first["replacement_timestamp"] != first["original_timestamp"]
+    assert Path(first["output_path"]).read_bytes() == clean
+    assert transcript.read_bytes() == b'{"text":"keep"}'
+    calls = list(sampler.calls)
+    restarted, _ = build_app(tmp_path, frames)
+    second = restarted.clean_visual_candidate(task_id, "vc-0001")
+    assert second == first
+    assert sampler.calls == calls
+    assert len(media.extracted) == 1
+    result_path = restarted.task_dir(task_id) / "visual" / "cleanup" / "vc-0001.json"
+    assert read_json(result_path)["original_image_path"]
+    assert restarted.tasks.get(task_id).artifacts["visual_cleanup"]["path"] == str(result_path.parent)
+
+
+def test_unresolved_is_persistent_and_not_duplicated(tmp_path, monkeypatch):
+    covered = overlay(page())
+    frames = {second: covered for second in range(11)}
+    app, _ = build_app(tmp_path, frames)
+    task_id, _, _, _ = prepared_task(app, tmp_path, frames)
+    sampler = FakeSampler(frames)
+    monkeypatch.setattr("agent_videonote.application.visual_ops.FFmpegFrameSampler",
+                        lambda _bin: sampler)
+    first = app.clean_visual_candidate(task_id, "vc-0001")
+    second = app.clean_visual_candidate(task_id, "vc-0001")
+    assert first == second
+    assert not first["resolved"]
+    assert len(sampler.calls) == 2
+    assert len([x for x in app.tasks.get(task_id).unresolved
+                if x["category"] == "visual_cleanup"]) == 1
+
+
+def test_candidate_must_belong_to_current_task_and_source(tmp_path, monkeypatch):
+    clean = page()
+    frames = {second: overlay(clean) if second == 5 else clean for second in range(11)}
+    app, _ = build_app(tmp_path, frames)
+    task_id, image, manifest, _ = prepared_task(app, tmp_path, frames)
+    monkeypatch.setattr("agent_videonote.application.visual_ops.FFmpegFrameSampler",
+                        lambda _bin: FakeSampler(frames))
+    other = tmp_path / "other.jpg"
+    other.write_bytes(image.read_bytes())
+    progress = read_json(manifest)
+    progress["candidates"][0]["image_path"] = str(other)
+    write_json_atomic(manifest, progress)
+    with pytest.raises(ValueError, match="provenance"):
+        app.clean_visual_candidate(task_id, "vc-0001")
+    progress["candidates"][0]["image_path"] = str(image)
+    progress["source_fingerprint"] = "wrong"
+    write_json_atomic(manifest, progress)
+    with pytest.raises(ValueError, match="source"):
+        app.clean_visual_candidate(task_id, "vc-0001")
+
+
+def test_search_config_rejects_unbounded_nearby_frames():
+    with pytest.raises(ValueError, match="max_samples"):
+        SourceSearchConfig(radius_seconds=6, sampling_interval=0.5, max_samples=20)

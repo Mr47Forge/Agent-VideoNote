@@ -36,6 +36,11 @@ def create_server():
         return facade.get_visual_candidates(task_id, start, limit)
 
     @mcp.tool()
+    def clean_visual_candidate(task_id: str, candidate_id: str) -> dict[str, Any]:
+        """寻找同状态的干净真实源帧；仅返回持久化结果摘要。"""
+        return facade.clean_visual_candidate(task_id, candidate_id)
+
+    @mcp.tool()
     def release_asr_role(role: str) -> dict[str, Any]:
         """结束一个 ASR 角色的驻留批次；不会删除模型文件或 Provider 配置。"""
         return facade.release_asr_role(role)

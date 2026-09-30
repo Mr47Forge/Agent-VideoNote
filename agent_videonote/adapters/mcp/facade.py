@@ -128,6 +128,9 @@ class McpToolFacade:
                               limit: int = 20) -> dict[str, Any]:
         return self.application.get_visual_candidates(task_id, start=start, limit=limit)
 
+    def clean_visual_candidate(self, task_id: str, candidate_id: str) -> dict[str, Any]:
+        return self.application.clean_visual_candidate(task_id, candidate_id)
+
     def complete_visual(self, task_id: str, evidence: dict[str, Any]) -> dict[str, Any]:
         return self.application.complete_visual(task_id, evidence)
 
