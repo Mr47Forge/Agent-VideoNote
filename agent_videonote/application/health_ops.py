@@ -40,15 +40,19 @@ class HealthOperationsMixin:
         if ffprobe is None:
             warnings.append(f"ffprobe not found: {self.config.ffprobe_bin}")
 
+        cleanup_registry = getattr(self, "cleanup_registry", None)
+        cleanup_capabilities = cleanup_registry.capabilities() if cleanup_registry else ()
+        cleanup_preflight = cleanup_registry.preflight() if cleanup_registry else {}
+        for provider_id, items in cleanup_preflight.items():
+            for item in items:
+                warnings.append(f"cleanup provider '{provider_id}': {item}")
+
         return {
             "status": "ok" if not warnings else "degraded",
             "data_dir": str(self.config.paths.root),
             "tasks_dir": str(self.config.paths.tasks),
             "models_dir": str(self.config.paths.models),
-            "media": {
-                "ffmpeg": ffmpeg,
-                "ffprobe": ffprobe,
-            },
+            "media": {"ffmpeg": ffmpeg, "ffprobe": ffprobe},
             "asr": {
                 "roles": roles,
                 "providers": providers,
@@ -58,14 +62,15 @@ class HealthOperationsMixin:
                 "gpu_residency_policy": "single_provider",
                 "preflight": provider_preflight,
                 "model_help": (
-                    {
-                        "available": True,
-                        "tool": "asr_models",
-                        "reason": "no ASR provider is currently registered",
-                    }
-                    if not providers
-                    else None
+                    {"available": True, "tool": "asr_models",
+                     "reason": "no ASR provider is currently registered"}
+                    if not providers else None
                 ),
+            },
+            "visual_cleanup": {
+                "providers": cleanup_capabilities,
+                "preflight": cleanup_preflight,
+                "policy": "source-frame-first; generated pixels require explicit mask and provider",
             },
             "warnings": warnings,
             "models_loaded": bool(loaded),
@@ -74,13 +79,11 @@ class HealthOperationsMixin:
 
 def _resolve_executable(value: str) -> str | None:
     candidate = Path(value).expanduser()
-
     if candidate.is_absolute() or candidate.parent != Path("."):
         try:
             resolved = candidate.resolve(strict=True)
         except FileNotFoundError:
             return None
         return str(resolved) if resolved.is_file() else None
-
     found = shutil.which(value)
     return str(Path(found).resolve()) if found else None

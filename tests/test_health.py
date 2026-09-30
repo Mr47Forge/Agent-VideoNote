@@ -4,6 +4,7 @@ from agent_videonote.application.health_ops import HealthOperationsMixin
 from agent_videonote.asr.profiles.models import AsrProfile
 from agent_videonote.asr.providers.registry import ProviderRegistry
 from agent_videonote.core.config import RuntimeConfig, RuntimePaths
+from agent_videonote.visuals.cleanup.factory import build_default_cleanup_registry
 
 
 class HealthHarness(HealthOperationsMixin):
@@ -39,14 +40,12 @@ def _harness(
     )
     harness.asr_registry = ProviderRegistry()
     harness.asr_profile = AsrProfile(roles=roles)
+    harness.cleanup_registry = build_default_cleanup_registry()
     return harness
 
 
 def test_health_is_ok_without_loading_models_when_core_tools_exist(tmp_path: Path) -> None:
-    harness = _harness(
-        tmp_path,
-        roles={"primary": None, "review": None},
-    )
+    harness = _harness(tmp_path, roles={"primary": None, "review": None})
 
     result = harness.health()
 
@@ -55,6 +54,8 @@ def test_health_is_ok_without_loading_models_when_core_tools_exist(tmp_path: Pat
     assert result["warnings"] == []
     assert result["media"]["ffmpeg"]
     assert result["media"]["ffprobe"]
+    cleanup = {item["strategy_id"]: item for item in result["visual_cleanup"]["providers"]}
+    assert {"source-frame-replacement", "opencv", "vsr-lama", "propainter"} <= cleanup.keys()
 
 
 def test_health_reports_configuration_problems_without_crashing(tmp_path: Path) -> None:

@@ -10,6 +10,9 @@ dependencies = []
 mcp = [
   "mcp>=2,<3",
 ]
+visual-cleanup = [
+  "opencv-python-headless>=4.5,<5",
+]
 
 [project.scripts]
 agent-videonote-selfcheck = "agent_videonote.selfcheck:main"
