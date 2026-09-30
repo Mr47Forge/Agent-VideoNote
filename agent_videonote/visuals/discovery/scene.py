@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import base64
 import math
 import subprocess
 from dataclasses import asdict, dataclass
@@ -8,11 +7,15 @@ from pathlib import Path
 from typing import Protocol
 
 from agent_videonote.storage.artifacts import read_json, write_json_atomic
+from agent_videonote.visuals.discovery.features import (
+    FRAME_BYTES, HEIGHT, PREVIEW_HEIGHT, PREVIEW_WIDTH, WIDTH,
+    aligned_difference, change, decode, difference, encode, fingerprints,
+    hash_distance, preview,
+)
 
 
-_WIDTH = 64
-_HEIGHT = 36
-_FRAME_BYTES = _WIDTH * _HEIGHT
+PROGRESS_SCHEMA_VERSION = 2
+DISCOVERY_ALGORITHM_VERSION = "visual-discovery-v2"
 
 
 @dataclass(frozen=True)
@@ -30,13 +33,19 @@ class DiscoveryConfig:
     min_brightness: float = 0.04
     min_detail: float = 0.015
     min_active_fraction: float = 0.08
+    local_content_threshold: float = 0.10
+    local_peak_threshold: float = 0.15
+    local_tile_threshold: float = 0.07
+    perceptual_threshold: float = 0.15
 
     def __post_init__(self) -> None:
         if not 0.5 <= self.sampling_interval <= 10:
             raise ValueError("sampling_interval must be between 0.5 and 10 seconds")
         for name in ("scene_threshold", "content_threshold", "stability_threshold",
                      "similarity_threshold", "min_brightness", "min_detail",
-                     "min_active_fraction"):
+                     "min_active_fraction", "local_content_threshold",
+                     "local_peak_threshold", "local_tile_threshold",
+                     "perceptual_threshold"):
             if not 0 < getattr(self, name) < 1:
                 raise ValueError(f"{name} must be between 0 and 1")
         if self.stability_window not in (1, 2, 3):
@@ -74,37 +83,32 @@ class FFmpegFrameSampler:
         args = [self.ffmpeg_bin, "-hide_banner", "-loglevel", "error",
                 "-ss", f"{start:.3f}", "-t", f"{duration:.3f}",
                 "-i", str(source), "-an", "-sn",
-                "-vf", f"fps=1/{interval:.6f},scale={_WIDTH}:{_HEIGHT}:flags=area,format=gray",
+                "-vf", f"fps=1/{interval:.6f},scale={WIDTH}:{HEIGHT}:flags=area,format=gray",
                 "-frames:v", str(count), "-f", "rawvideo", "-pix_fmt", "gray", "pipe:1"]
         try:
             result = subprocess.run(args, capture_output=True, check=True,
                                     timeout=max(90, duration * 4))
         except subprocess.CalledProcessError as exc:
             raise RuntimeError(f"visual sampling failed: {exc.stderr.decode('utf-8', 'replace')[-600:]}") from exc
-        if len(result.stdout) % _FRAME_BYTES:
+        if len(result.stdout) % FRAME_BYTES:
             raise RuntimeError("visual sampling returned an incomplete frame")
-        return [FrameSample(round(start + i * interval, 3),
-                            result.stdout[i * _FRAME_BYTES:(i + 1) * _FRAME_BYTES])
-                for i in range(min(count, len(result.stdout) // _FRAME_BYTES))]
-
-
-def _difference(left: bytes, right: bytes) -> float:
-    return sum(abs(a - b) for a, b in zip(left, right)) / (_FRAME_BYTES * 255)
+        # The fps filter selects the frame nearest the center of each sample bin.
+        # Labeling it with the bin start can extract the preceding page at a cut.
+        return [FrameSample(round(min(start + duration, start + (i + 0.5) * interval), 3),
+                            result.stdout[i * FRAME_BYTES:(i + 1) * FRAME_BYTES])
+                for i in range(min(count, len(result.stdout) // FRAME_BYTES))]
 
 
 def _quality(pixels: bytes) -> tuple[float, float, float]:
-    brightness = sum(pixels) / (_FRAME_BYTES * 255)
-    detail = sum(abs(pixels[i] - pixels[i - 1]) for i in range(1, _FRAME_BYTES)) / ((_FRAME_BYTES - 1) * 255)
-    active_fraction = sum(pixel > 24 for pixel in pixels) / _FRAME_BYTES
+    brightness = sum(pixels) / (FRAME_BYTES * 255)
+    # A three-pixel stride keeps the quality scale comparable to the old
+    # 64-wide thumbnail after increasing detection resolution to 160 pixels.
+    stride = 3
+    detail = sum(abs(pixels[row + x] - pixels[row + x - stride])
+                 for row in range(0, FRAME_BYTES, WIDTH)
+                 for x in range(stride, WIDTH)) / (HEIGHT * (WIDTH - stride) * 255)
+    active_fraction = sum(pixel > 24 for pixel in pixels) / FRAME_BYTES
     return brightness, detail, active_fraction
-
-
-def _encode(pixels: bytes | None) -> str | None:
-    return base64.b64encode(pixels).decode("ascii") if pixels is not None else None
-
-
-def _decode(value: str | None) -> bytes | None:
-    return base64.b64decode(value) if value else None
 
 
 class SceneContentDiscovery:
@@ -126,16 +130,31 @@ class SceneContentDiscovery:
         image_dir = visual_dir / "candidates"
         if manifest_path.is_file():
             progress = read_json(manifest_path)
-            if (progress.get("source_fingerprint") != fingerprint
-                    or progress.get("config") != asdict(self.config)):
+            # Early v2 checkpoints already use schema 2 but predate the
+            # explicit algorithm marker. They use this same discovery logic.
+            if (progress.get("schema_version") != PROGRESS_SCHEMA_VERSION
+                    or progress.get("algorithm_version") not in
+                    (None, DISCOVERY_ALGORITHM_VERSION)):
+                raise ValueError(
+                    "visual discovery progress belongs to an older or incompatible version; "
+                    "existing progress and candidates were preserved. "
+                    "Start a new Visual Discovery v2 scan in a new visual artifact directory."
+                )
+            if progress.get("source_fingerprint") != fingerprint:
                 raise ValueError("visual discovery source or configuration changed; existing progress was preserved")
+            if progress.get("config") != asdict(self.config):
+                raise ValueError("visual discovery source or configuration changed; existing progress was preserved")
+            if progress.get("complete"):
+                return self.summary(progress, manifest_path)
         else:
             progress = {
-                "schema_version": 1, "source_fingerprint": fingerprint,
+                "schema_version": PROGRESS_SCHEMA_VERSION,
+                "algorithm_version": DISCOVERY_ALGORITHM_VERSION,
+                "source_fingerprint": fingerprint,
                 "source_path": str(source), "duration": duration,
                 "config": asdict(self.config), "scanned_until": 0.0,
                 "raw_candidate_count": 0, "deduplicated_count": 0,
-                "filtered_count": 0, "candidates": [],
+                "filtered_count": 0, "candidates": [], "duplicate_events": [],
                 "previous_frame": None, "reference_frame": None,
                 "pending": None, "complete": False,
             }
@@ -157,27 +176,41 @@ class SceneContentDiscovery:
     def _observe(self, progress: dict, sample: FrameSample,
                  source: Path, image_dir: Path) -> None:
         frame = sample.pixels
-        if len(frame) != _FRAME_BYTES:
+        if len(frame) != FRAME_BYTES:
             raise ValueError("invalid thumbnail dimensions")
-        previous = _decode(progress["previous_frame"])
-        reference = _decode(progress["reference_frame"])
-        delta = _difference(previous, frame) if previous else 0.0
-        baseline_delta = _difference(reference, frame) if reference else 0.0
+        previous = decode(progress["previous_frame"])
+        reference = decode(progress["reference_frame"])
+        delta = difference(previous, frame) if previous else 0.0
         brightness, detail, active_fraction = _quality(frame)
         valid = (brightness >= self.config.min_brightness
                  and detail >= self.config.min_detail
                  and active_fraction >= self.config.min_active_fraction)
         pending = progress["pending"]
 
+        def event(reason: str, measured, detected_at: float, stable: int) -> dict:
+            return {
+                "reason": reason,
+                "score": round(measured.local_score if reason == "local_content_change"
+                               else measured.global_score, 4),
+                "global_score": round(measured.global_score, 4),
+                "local_score": round(measured.local_score, 4),
+                "changed_region_fraction": round(measured.changed_region_fraction, 4),
+                "detected_at": detected_at, "stable": stable,
+            }
+
         if not valid:
             progress["filtered_count"] += 1
             progress["pending"] = None
         elif previous is None:
-            progress["pending"] = {"reason": "initial_stable_content", "score": 0.0,
-                                   "detected_at": sample.second, "stable": 0}
+            progress["pending"] = {
+                "reason": "initial_stable_content", "score": 0.0,
+                "global_score": 0.0, "local_score": 0.0,
+                "changed_region_fraction": 0.0,
+                "detected_at": sample.second, "stable": 0,
+            }
         elif delta >= self.config.scene_threshold:
-            progress["pending"] = {"reason": "scene_change", "score": round(delta, 4),
-                                   "detected_at": sample.second, "stable": 0}
+            progress["pending"] = event("scene_change", change(previous, frame),
+                                         sample.second, 0)
         elif pending is not None:
             if delta <= self.config.stability_threshold:
                 pending["stable"] += 1
@@ -185,17 +218,60 @@ class SceneContentDiscovery:
                     self._accept(progress, sample, source, image_dir, pending,
                                  brightness, detail, active_fraction)
                     progress["pending"] = None
-                    progress["reference_frame"] = _encode(frame)
+                    progress["reference_frame"] = encode(frame)
             else:
                 pending["stable"] = 0
-        elif (reference is not None and baseline_delta >= self.config.content_threshold
-              and delta <= self.config.stability_threshold):
-            self._accept(progress, sample, source, image_dir,
-                         {"reason": "content_change", "score": round(baseline_delta, 4),
-                          "detected_at": sample.second, "stable": 1}, brightness, detail,
-                         active_fraction)
-            progress["reference_frame"] = _encode(frame)
-        progress["previous_frame"] = _encode(frame)
+        elif reference is not None and delta <= self.config.stability_threshold:
+            measured = change(reference, frame,
+                              active_threshold=self.config.local_tile_threshold)
+            if measured.global_score >= self.config.content_threshold:
+                reason = "content_change"
+            elif (measured.local_score >= self.config.local_content_threshold
+                  and measured.max_local_score >= self.config.local_peak_threshold
+                  and measured.largest_region >= 2):
+                reason = "local_content_change"
+            else:
+                reason = None
+            if reason:
+                progress["pending"] = event(reason, measured, sample.second, 0)
+        progress["previous_frame"] = encode(frame)
+
+    def _find_duplicate(self, candidates: list[dict], sample_preview: bytes,
+                        sample_hashes: list[str]) -> tuple[dict | None, float | None, float | None, str | None]:
+        best = None
+        best_hash = None
+        best_difference = None
+        best_kind = None
+        best_rank = float("inf")
+        for candidate in candidates:
+            fingerprint = candidate["fingerprint"]
+            distance = hash_distance(fingerprint["hashes"], sample_hashes)
+            prior = decode(fingerprint["preview"])
+            pixel_difference = difference(prior, sample_preview)
+            if distance > 0.25 or pixel_difference > 0.16:
+                continue
+            measured = change(prior, sample_preview, width=PREVIEW_WIDTH,
+                              height=PREVIEW_HEIGHT,
+                              active_threshold=self.config.local_tile_threshold)
+            local_text_change = (measured.local_score >= self.config.local_content_threshold
+                                 and measured.largest_region >= 2
+                                 and measured.changed_region_fraction < 0.50)
+            similar_pixels = pixel_difference <= self.config.similarity_threshold
+            similar_structure = (distance <= self.config.perceptual_threshold
+                                 and pixel_difference <= 0.16)
+            aligned = aligned_difference(prior, sample_preview)
+            similar_zoom = aligned <= 0.03
+            if (local_text_change and not similar_zoom) or not (
+                    similar_pixels or similar_structure or similar_zoom):
+                continue
+            rank = min(pixel_difference, aligned) + distance / 2
+            if rank < best_rank:
+                best = candidate
+                best_hash = distance
+                best_difference = pixel_difference
+                best_kind = "zoom_or_pan" if pixel_difference > self.config.similarity_threshold else "repeat"
+                best_rank = rank
+        return best, best_hash, best_difference, best_kind
 
     def _accept(self, progress: dict, sample: FrameSample, source: Path,
                 image_dir: Path, pending: dict, brightness: float, detail: float,
@@ -203,10 +279,21 @@ class SceneContentDiscovery:
         progress["raw_candidate_count"] += 1
         candidates = progress["candidates"]
         last = candidates[-1] if candidates else None
-        similarity = _difference(_decode(last["thumbnail"]), sample.pixels) if last else None
-        if similarity is not None and similarity <= self.config.similarity_threshold:
+        sample_preview = preview(sample.pixels)
+        sample_hashes = fingerprints(sample.pixels)
+        match, hash_delta, visual_delta, duplicate_kind = self._find_duplicate(
+            candidates, sample_preview, sample_hashes)
+        prior_difference = (difference(decode(last["fingerprint"]["preview"]), sample_preview)
+                            if last else None)
+        if match is not None:
             progress["deduplicated_count"] += 1
-            if detail <= last["stability"]["detail"]:
+            events = progress.setdefault("duplicate_events", [])
+            events.append({"timestamp": sample.second, "matched_candidate_id": match["candidate_id"],
+                           "perceptual_distance": round(hash_delta, 4), "kind": duplicate_kind})
+            del events[:-200]
+            if (match is not last
+                    or sample.second - last["timestamp"] > self.config.min_candidate_gap
+                    or detail <= last["stability"]["detail"]):
                 return
             candidate_id = last["candidate_id"]
             replaced = True
@@ -231,15 +318,24 @@ class SceneContentDiscovery:
             "candidate_id": candidate_id, "timestamp": sample.second,
             "image_path": str(image_path), "reason": pending["reason"],
             "change_score": pending["score"],
+            "global_change_score": pending["global_score"],
+            "local_change_score": pending["local_score"],
+            "changed_region_fraction": pending["changed_region_fraction"],
             "stability": {"samples": pending["stable"], "brightness": round(brightness, 4),
                           "detail": round(detail, 4),
                           "active_fraction": round(active_fraction, 4)},
-            "similarity": {"difference_from_previous": round(similarity, 4) if similarity is not None else None,
-                           "deduplicated": replaced},
+            "similarity": {
+                "difference_from_previous": round(prior_difference, 4) if prior_difference is not None else None,
+                "deduplicated": replaced,
+                "perceptual": {"nearest_candidate_id": match["candidate_id"] if match else None,
+                               "hash_distance": round(hash_delta, 4) if hash_delta is not None else None,
+                               "visual_difference": round(visual_delta, 4) if visual_delta is not None else None,
+                               "kind": duplicate_kind},
+            },
             "source_frame": {"video": str(source), "timestamp": sample.second,
                              "detected_at": pending["detected_at"],
                              "sampling_interval": self.config.sampling_interval},
-            "thumbnail": _encode(sample.pixels),
+            "fingerprint": {"hashes": sample_hashes, "preview": encode(sample_preview)},
         }
         if replaced:
             candidates[-1] = item
@@ -274,7 +370,8 @@ def read_candidates(manifest_path: Path, *, start: int, limit: int) -> dict:
     if start < 0 or not 1 <= limit <= 50:
         raise ValueError("start must be nonnegative and limit must be between 1 and 50")
     progress = read_json(manifest_path)
-    page = [{key: value for key, value in item.items() if key != "thumbnail"}
+    page = [{key: value for key, value in item.items()
+             if key not in ("thumbnail", "fingerprint")}
             for item in progress["candidates"][start:start + limit]]
     return {"total": len(progress["candidates"]), "start": start,
             "limit": limit, "candidates": page,

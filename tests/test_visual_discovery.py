@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 
 import pytest
@@ -14,20 +15,46 @@ from agent_videonote.tasks.service import TaskService
 from agent_videonote.workflow.engine import WorkflowEngine
 from agent_videonote.storage.artifacts import read_json
 from agent_videonote.visuals.discovery.scene import (
+    DISCOVERY_ALGORITHM_VERSION, PROGRESS_SCHEMA_VERSION,
     DiscoveryConfig, FrameSample, SceneContentDiscovery, read_candidates,
 )
 
 
 def frame(low: int, high: int) -> bytes:
-    return bytes((high if (x // 4) % 2 else low)
-                 for y in range(36) for x in range(64))
+    return bytes((high if (x // 10) % 2 else low)
+                 for y in range(90) for x in range(160))
 
 
 A = frame(25, 220)
 B = frame(220, 25)
-C = frame(45, 245)
-D = frame(45, 240)
-BLACK = bytes(64 * 36)
+C = bytes(245 if (x // 10 + y // 10) % 2 else 45
+          for y in range(90) for x in range(160))
+BRIGHT_A = frame(45, 245)
+D = bytes((245 if value == 25 else 45) if 40 <= index % 160 < 70 else value
+          for index, value in enumerate(A))
+BLACK = bytes(160 * 90)
+
+
+def narrow_page(*, changed: bool = False) -> bytes:
+    """Text-like marks occupy a narrow column surrounded by blank margins."""
+    pixels = bytearray([235] * (160 * 90))
+    for y in range(8, 82):
+        for x in range(57, 103):
+            if y % 5 in (0, 1, 2) and x % 7 < 5:
+                pixels[y * 160 + x] = 45
+            if changed and 25 <= y < 70 and y % 4 in (0, 1, 2) and x % 5 < 4:
+                pixels[y * 160 + x] = 20
+    return bytes(pixels)
+
+
+def shifted_zoom(pixels: bytes) -> bytes:
+    result = bytearray(len(pixels))
+    for y in range(90):
+        for x in range(160):
+            source_x = min(159, max(0, round((x - 80) / 1.04 + 80)))
+            source_y = min(89, max(0, round((y - 45) / 1.04 + 45)))
+            result[y * 160 + x] = pixels[source_y * 160 + source_x]
+    return bytes(result)
 
 
 class FakeSampler:
@@ -74,16 +101,16 @@ def test_scene_change_selects_later_stable_frame(tmp_path):
 
 
 def test_gradual_content_change_without_scene_cut(tmp_path):
-    result, _, _ = run(tmp_path, [A, A, A, D, D, D],
+    result, _, _ = run(tmp_path, [A, A, A, D, D, D, D, D],
                        config=DiscoveryConfig(min_candidate_gap=2))
     items = read_candidates(Path(result["artifact_path"]), start=0, limit=20)["candidates"]
     assert [item["reason"] for item in items] == ["initial_stable_content", "content_change"]
-    assert items[1]["timestamp"] == 8.0
+    assert items[1]["timestamp"] == 12.0
 
 
 def test_similar_candidate_is_deduplicated(tmp_path):
     config = DiscoveryConfig(scene_threshold=0.10, similarity_threshold=0.15)
-    result, _, _ = run(tmp_path, [A, A, A, C, C, C], config=config)
+    result, _, _ = run(tmp_path, [A, A, A] + [BRIGHT_A] * 5, config=config)
     assert result["raw_candidate_count"] == 2
     assert result["candidate_count"] == 1
     assert result["deduplicated_count"] == 1
@@ -124,6 +151,8 @@ def test_restart_resumes_at_checkpoint_and_reuses_candidates(tmp_path):
     assert first["scanned_duration"] == 10
     assert not first["complete"]
     before = read_json(first["artifact_path"])["candidates"]
+    assert read_json(first["artifact_path"])["schema_version"] == PROGRESS_SCHEMA_VERSION
+    assert read_json(first["artifact_path"])["algorithm_version"] == DISCOVERY_ALGORITHM_VERSION
     second, _, _ = run(tmp_path, frames, config=config, budget=10,
                        sampler=sampler, media=media)
     assert second["complete"]
@@ -135,10 +164,100 @@ def test_restart_resumes_at_checkpoint_and_reuses_candidates(tmp_path):
     assert sampler.starts == [0.0, 10.0]
 
 
+@pytest.mark.parametrize(("schema_version", "algorithm_version", "complete"), [
+    (1, None, False),
+    (1, None, True),
+    (2, "incompatible-algorithm", False),
+])
+def test_old_progress_requires_new_scan_without_touching_artifacts(
+        tmp_path, schema_version, algorithm_version, complete):
+    frames = [A, A, A, B, B, B]
+    sampler = FakeSampler(frames)
+    media = FakeMedia()
+    first, _, _ = run(tmp_path, frames, budget=120 if complete else 10,
+                      sampler=sampler, media=media)
+    manifest = Path(first["artifact_path"])
+    progress = read_json(manifest)
+    progress["schema_version"] = schema_version
+    if algorithm_version is None:
+        progress.pop("algorithm_version", None)
+    else:
+        progress["algorithm_version"] = algorithm_version
+    manifest.write_text(json.dumps(progress), encoding="utf-8")
+    manifest_before = manifest.read_bytes()
+    images_before = {path: path.read_bytes()
+                     for path in (tmp_path / "visual" / "candidates").glob("*.jpg")}
+    starts_before = list(sampler.starts)
+
+    with pytest.raises(ValueError, match="Start a new Visual Discovery v2 scan"):
+        run(tmp_path, frames, budget=10, sampler=sampler, media=media)
+
+    assert manifest.read_bytes() == manifest_before
+    assert {path: path.read_bytes() for path in images_before} == images_before
+    assert sampler.starts == starts_before
+
+
+@pytest.mark.parametrize("complete", [False, True])
+def test_unmarked_v2_progress_remains_resumable(tmp_path, complete):
+    frames = [A, A, A, B, B, B]
+    sampler = FakeSampler(frames)
+    first, _, _ = run(tmp_path, frames, budget=120 if complete else 10,
+                      sampler=sampler)
+    manifest = Path(first["artifact_path"])
+    progress = read_json(manifest)
+    progress.pop("algorithm_version")
+    manifest.write_text(json.dumps(progress), encoding="utf-8")
+    starts_before = list(sampler.starts)
+
+    result, _, _ = run(tmp_path, frames, budget=10, sampler=sampler)
+
+    assert result["complete"]
+    assert result["candidate_count"] == 2
+    assert sampler.starts == (starts_before if complete else starts_before + [10.0])
+
+
 def test_candidate_page_is_bounded(tmp_path):
     result, _, _ = run(tmp_path, [A, A, A])
     with pytest.raises(ValueError):
         read_candidates(Path(result["artifact_path"]), start=0, limit=51)
+
+
+def test_narrow_local_text_change_below_global_threshold_is_found(tmp_path):
+    original = narrow_page()
+    changed = narrow_page(changed=True)
+    result, _, _ = run(tmp_path, [original] * 4 + [changed] * 5,
+                       config=DiscoveryConfig(min_candidate_gap=2))
+    items = read_candidates(Path(result["artifact_path"]), start=0, limit=20)["candidates"]
+    assert len(items) == 2
+    assert items[1]["reason"] == "local_content_change"
+    assert items[1]["global_change_score"] < 0.075
+    assert items[1]["local_change_score"] > items[1]["global_change_score"]
+    assert 0 < items[1]["changed_region_fraction"] < 0.5
+    assert "perceptual" in items[1]["similarity"]
+
+
+def test_nonadjacent_repeat_is_deduplicated_across_restart(tmp_path):
+    frames = [A] * 3 + [B] * 3 + [C] * 3 + [A] * 3
+    sampler = FakeSampler(frames)
+    first, _, _ = run(tmp_path, frames, budget=18, sampler=sampler)
+    assert first["scanned_duration"] == 18
+    second, _, _ = run(tmp_path, frames, budget=18, sampler=sampler)
+    items = read_candidates(Path(second["artifact_path"]), start=0, limit=20)["candidates"]
+    assert second["raw_candidate_count"] == 4
+    assert second["candidate_count"] == 3
+    assert second["deduplicated_count"] == 1
+    assert [item["timestamp"] for item in items] == [4.0, 10.0, 16.0]
+    assert sampler.starts == [0.0, 18.0]
+    assert all(item["fingerprint"] for item in read_json(second["artifact_path"])["candidates"])
+
+
+def test_small_zoom_does_not_create_many_candidates(tmp_path):
+    zoomed = shifted_zoom(A)
+    result, _, _ = run(tmp_path, [A] * 3 + [zoomed] * 12,
+                       config=DiscoveryConfig(min_candidate_gap=2))
+    assert result["candidate_count"] == 1
+    assert result["raw_candidate_count"] == 2
+    assert result["deduplicated_count"] == 1
 
 
 def test_application_discovery_preserves_transcript_and_task_stage(tmp_path, monkeypatch):
