@@ -23,7 +23,10 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           python -m pip install -e ".[mcp]"
-          python -m pip install pytest
+          # numpy is not an import-time dependency of the package, but the
+          # mask-outside-pixel safety test needs it; without it that test
+          # silently skips (see tests/test_cleanup_providers.py).
+          python -m pip install pytest "numpy>=1.26"
 
       - name: Compile
         run: python -m compileall -q agent_videonote tests
