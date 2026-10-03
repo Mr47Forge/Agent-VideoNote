@@ -92,6 +92,7 @@ class TranscriptOperationsMixin:
                         "recovered": True,
                     },
                 )
+            summary["task"] = self._task_summary(self.tasks.get(task_id))
             return summary
 
         if state.current_stage != WorkflowStage.TRANSCRIPT.value:
@@ -116,7 +117,9 @@ class TranscriptOperationsMixin:
             task_id,
             evidence={"transcript": str(path), "source_id": transcript.source_id},
         )
-        return self._transcript_summary(task_id, path)
+        summary = self._transcript_summary(task_id, path)
+        summary["task"] = self._task_summary(self.tasks.get(task_id))
+        return summary
 
     def transcribe(
         self,
@@ -152,6 +155,7 @@ class TranscriptOperationsMixin:
                         "recovered": True,
                     },
                 )
+            summary["task"] = self._task_summary(self.tasks.get(task_id))
             return summary
 
         if state.current_stage != WorkflowStage.TRANSCRIPT.value:
@@ -200,6 +204,7 @@ class TranscriptOperationsMixin:
             evidence={"transcript": str(path), "source_id": transcript.source_id},
         )
         summary = self._transcript_summary(task_id, path)
+        summary["task"] = self._task_summary(self.tasks.get(task_id))
         self.asr_registry.release_provider(provider_id)
         return summary
 

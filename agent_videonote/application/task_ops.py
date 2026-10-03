@@ -87,10 +87,15 @@ class TaskOperationsMixin:
             artifact = state.artifacts.get(name)
             if not artifact:
                 continue
-            core_artifacts[name] = {
+            item = {
                 "kind": artifact.get("kind"),
                 "path": artifact.get("path"),
             }
+            if name == "transcript":
+                metadata = artifact.get("metadata") or {}
+                if metadata.get("course_id"):
+                    item["course_id"] = metadata["course_id"]
+            core_artifacts[name] = item
 
         stage = WorkflowStage(state.current_stage)
         return {
@@ -98,6 +103,7 @@ class TaskOperationsMixin:
             "source": state.source.path,
             "current_stage": stage.value,
             "context_key": workflow_context_key(stage),
+            "context_tool": "task_context",
             "completed_stages": list(state.completed_stages),
             "core_artifacts": core_artifacts,
             "artifact_total": len(state.artifacts),

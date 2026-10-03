@@ -50,6 +50,13 @@ def test_health_is_ok_without_loading_models_when_core_tools_exist(tmp_path: Pat
     result = harness.health()
 
     assert result["status"] == "ok"
+    assert result["runtime_protocol"] == {
+        "schema_version": 1,
+        "new_task": "prepare",
+        "resume_task": "task",
+        "context_tool": "task_context",
+        "reload_context": "new_session_or_context_key_change",
+    }
     assert result["models_loaded"] is False
     assert result["warnings"] == []
     assert result["media"]["ffmpeg"]

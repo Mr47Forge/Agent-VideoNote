@@ -4,6 +4,8 @@ import shutil
 from pathlib import Path
 from typing import Any
 
+from agent_videonote.workflow.context import runtime_protocol
+
 
 class HealthOperationsMixin:
     def health(self) -> dict[str, Any]:
@@ -49,6 +51,7 @@ class HealthOperationsMixin:
 
         return {
             "status": "ok" if not warnings else "degraded",
+            "runtime_protocol": runtime_protocol(),
             "data_dir": str(self.config.paths.root),
             "tasks_dir": str(self.config.paths.tasks),
             "models_dir": str(self.config.paths.models),

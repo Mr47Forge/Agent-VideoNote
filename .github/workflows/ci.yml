@@ -35,7 +35,7 @@ jobs:
         run: |
           python -c "from agent_videonote.adapters.mcp.server import create_server; mcp, container = create_server(); container.asr_registry.close_all(); print(type(mcp).__name__)"
 
-      - name: Build wheel and verify packaged workflow rules
+      - name: Build wheel and verify packaged workflow runtime
         run: |
           python -m pip wheel . --no-deps -w dist
           python - <<'PY'
@@ -56,3 +56,18 @@ jobs:
           missing = expected - names
           assert not missing, sorted(missing)
           PY
+
+          python -m pip install --no-deps --target wheel-smoke dist/agent_videonote-*.whl
+          (
+            cd /tmp
+            PYTHONPATH="$GITHUB_WORKSPACE/wheel-smoke" python - <<'PY'
+          from agent_videonote.workflow.context import build_workflow_context, runtime_protocol
+          from agent_videonote.workflow.stages import WorkflowStage
+
+          context = build_workflow_context(WorkflowStage.VISUAL)
+          assert context["stage"] == "visual"
+          assert "源内容忠实优先" in context["core_rules"]
+          assert "视觉处理" in context["stage_rules"]
+          assert runtime_protocol()["context_tool"] == "task_context"
+          PY
+          )

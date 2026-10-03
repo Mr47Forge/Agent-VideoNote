@@ -20,7 +20,7 @@ def create_server():
 
     @mcp.tool()
     def health() -> dict[str, Any]:
-        """轻量运行体检：检查媒体工具和 Provider 配置，不加载模型。"""
+        """PROCESS 首个调用：轻量体检，并返回跨 Agent 的 runtime_protocol；不加载模型。"""
         return facade.health()
 
     @mcp.tool()
@@ -93,7 +93,7 @@ def create_server():
 
     @mcp.tool()
     def prepare(source: str) -> dict[str, Any]:
-        """创建或恢复本地视频任务，并读取紧凑媒体信息。"""
+        """创建/恢复任务；返回当前 context_key。新会话或 key 变化后调用 task_context。"""
         return facade.prepare(source)
 
     @mcp.tool()
@@ -184,7 +184,7 @@ def create_server():
 
     @mcp.tool()
     def task(task_id: str) -> dict[str, Any]:
-        """读取紧凑任务状态；context_key 变化时再调用 task_context。"""
+        """读取紧凑任务状态；返回 context_tool/context_key，按其提示加载当前规则。"""
         return facade.task(task_id)
 
     @mcp.tool()

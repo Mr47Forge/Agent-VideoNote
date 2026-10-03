@@ -156,3 +156,33 @@ application 按能力与配置调用 Provider。
 `task()` 是对 `state.json` 的有界派生视图，不产生第二份状态；它返回当前阶段、`context_key`、核心 artifact 和分类计数。`task_context()` 再按这个机器状态读取包内唯一规则资源，返回 `core_rules + stage_rules`。新增运行状态字段时，优先扩展机器状态/派生摘要，不在 Markdown 中另建平行状态表。
 
 同理，本项目不新增一个与 MCP runtime 平行的 `SKILL.md + task-*` 运行体系。Skill 宿主能力不一致，而 MCP 是 Codex / DSH / OpenCode 等客户端共同的运行边界；阶段胶囊通过 `task_context` 统一下发。
+
+## 9. 阶段推进返回契约
+
+任何会改变 `current_stage` 的 application / MCP 入口，都必须在同一次返回中暴露**推进后的 task 摘要**，至少包含：
+
+- `current_stage`
+- `context_key`
+- `context_tool`
+
+这样 Agent 能在阶段完成后立即知道是否需要重新加载 `task_context`，而不是继续使用上一阶段规则。
+
+当前推进链：
+
+```text
+prepare
+  input → transcript
+
+ingest_srt / transcribe
+  transcript → visual
+
+complete_visual
+  visual → delivery
+
+validate_delivery(ok)
+  delivery → done
+```
+
+新增阶段或新增“会推进阶段”的工具时，必须扩展阶段切换契约测试。不得只修改 `WorkflowEngine` 而让工具返回值继续停留在旧阶段。
+
+`health.runtime_protocol` 是无 AGENTS / 无 Skill 宿主的自举入口；`task.context_tool` 是恢复任务后的机器提示。两者都属于 MCP 运行契约，不由宿主约定替代。

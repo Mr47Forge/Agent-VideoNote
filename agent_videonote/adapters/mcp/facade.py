@@ -156,7 +156,7 @@ class McpToolFacade:
         )
 
     def complete_visual(self, task_id: str, evidence: dict[str, Any]) -> dict[str, Any]:
-        return self.application.complete_visual(task_id, evidence)
+        return {"task": self.application.complete_visual(task_id, evidence)}
 
     def validate_delivery(self, task_id: str, deliverables_dir: str) -> dict[str, Any]:
         report = self.application.validate_and_finish_delivery(task_id, deliverables_dir)
@@ -166,6 +166,7 @@ class McpToolFacade:
             "image_references": list(report.image_references),
             "orphan_images": list(report.orphan_images),
             "unexpected_entries": list(report.unexpected_entries),
+            "task": self.application.get_task(task_id),
         }
 
 

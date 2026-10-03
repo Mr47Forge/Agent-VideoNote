@@ -95,6 +95,7 @@ def test_task_summary_exposes_machine_routed_workflow_and_bounded_unresolved_cou
     result = app.get_task(state.task_id)
 
     assert result["context_key"].startswith("input:")
+    assert result["context_tool"] == "task_context"
     assert result["unresolved_count"] == 3
     assert result["unresolved_counts"] == {"visual_cleanup": 2, "asr_review": 1}
     assert "candidate_id" not in str(result["unresolved_counts"])

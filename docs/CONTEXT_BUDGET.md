@@ -11,6 +11,8 @@
 ```text
 MCP
  ↓
+health.runtime_protocol
+ ↓
 prepare / task
  ↓
 context_key
@@ -77,7 +79,8 @@ CI 对包内运行规则执行硬预算：
 
 - 不把 README / docs 当运行 prompt。
 - 不通过对话记忆保存任务进度。
-- `task()` 只返回有界状态摘要。
+- `health()` 只增加一个很小的 `runtime_protocol`，用于无 AGENTS / 无 Skill 宿主自举。
+- `task()` 只返回有界状态摘要，并显式提供 `context_tool`。
 - `task_context()` 只在新会话或 `context_key` 变化后读取一次，不在每个工具调用里重复返回规则。
 - 大文本按段读取；只有当前任务确需时才打开具体 artifact。
 - 文档用于维护，机器状态用于运行。
