@@ -142,3 +142,17 @@ application 按能力与配置调用 Provider。
 - 不复制其任务 ID、缓存或配置结构作为兼容前提
 
 若迁移历史数据，应通过独立的 `migration/` 工具完成，迁移工具不得成为正常运行依赖。
+
+## 8. 事实源层级
+
+为了避免 Skill / workflow / 文档 / 状态文件互相复制，按下面的层级判断“谁说了算”：
+
+1. **任务运行状态**：`tasks/<task-id>/state.json` 是阶段、artifact 索引、unresolved 和事件的机器真源，只通过 `TaskService` / `WorkflowEngine` 修改。
+2. **产物内容**：具体 transcript、visual discovery、cleanup、delivery 等 artifact 文件是其内容真源；`state.json` 只保存索引和摘要，不复制正文。
+3. **Agent 运行路由**：`AGENTS.md` 只定义启动/按需读取规则；`workflow/00-core.md` 保存全程运行不变量；`prepare` / `task` 返回的 `workflow_file` 决定当前唯一阶段胶囊。
+4. **运行能力与环境**：ASR / Cleanup Provider 是否可用，以运行配置、Registry 和 `health` 的实际结果为准。
+5. **维护文档**：`docs/**`、模块 README、`THIRD_PARTY.md` 用于解释架构、许可证和历史决策，不得反向覆盖机器状态或被普通 PROCESS 当作运行真源。
+
+`task()` 是对 `state.json` 的有界派生视图，不产生第二份状态；它只返回当前阶段、阶段规则文件、核心 artifact、分类计数等恢复任务真正需要的信息。新增运行状态字段时，优先扩展机器状态/派生摘要，不在 Markdown 中另建平行状态表。
+
+同理，本项目不新增一个与 `AGENTS.md + workflow/` 平行的 `SKILL.md + task-*` 运行体系。当前阶段胶囊已经承担按需加载职责，再复制一套只会增加同步成本。

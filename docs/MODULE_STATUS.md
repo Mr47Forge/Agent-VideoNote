@@ -1,53 +1,40 @@
-# 模块状态
+# 模块维护导航
 
-> 只用于维护；正常 PROCESS 不读取本文件。
+> 本文件**不是当前任务状态或运行能力的事实源**，正常 PROCESS 不读取。
+> 它只告诉维护者“某类能力去哪里看、用什么验证”，避免手工状态表随代码演进而漂移。
 
-## 已实现并有自动测试
+## 运行时应该相信什么
 
-| 模块 | 当前状态 |
+| 问题 | 唯一优先来源 |
 |---|---|
-| core | 运行目录、基础类型、显式错误、分布式快速视频指纹 |
-| storage | JSON 原子写入、跨进程短锁、原子 mutate、陈旧锁恢复 |
-| tasks | 路径无关 task_id、搬盘恢复、artifact / event / unresolved 原子更新 |
-| workflow | input → transcript → visual → delivery → done，阶段推进原子化 |
-| media | FFmpeg/ffprobe 探测、抽音频、切片、变速、按时间抽帧 |
-| transcripts | SRT → 统一 Transcript、基础时间轴校验、限制段数读取 |
-| asr | Provider、capability、role profile、运行配置、默认并发护栏 |
-| asr/context | 课程上下文持久化；支持本次调用叠加临时词/语言/文本 |
-| asr/catalog | 按需模型候选目录：速度、质量、硬件、优缺点、基准、集成状态；默认紧凑返回 |
-| application | 已拆成 task / transcript / delivery / health 操作；service.py 仅薄门面 |
-| recovery | media/transcript/review/delivery 中断后的已有产物可自动收口/接管 |
-| review cache | 缓存键包含 Provider + 实际上下文；缓存命中与首次返回结构一致 |
-| health | 不加载模型的启动体检：FFmpeg/ffprobe、ASR role/provider 配置 |
-| visuals/discovery | 有上限 interval overview 候选采样 |
-| visuals/cleanup | 策略注册、unresolved、同状态已确认干净源帧替换 |
-| visuals/alignment | 基础图片锚点校验 |
-| delivery | 缺文件、缺图、孤图、越界引用、多余顶层文件检查 |
-| adapters/mcp | MCP v2 stdio Server + 薄 facade |
-| CI | Python 3.11/3.13：compile、pytest、安装 MCP v2、Server 构建冒烟 |
+| 当前任务在哪个阶段、完成了什么 | MCP `task` / 持久化 `state.json` |
+| 当前应该读哪个工作流文件 | `task.workflow_file` |
+| ASR / Cleanup Provider 当前是否可用 | MCP `health` + 运行配置 / Registry |
+| transcript / visual / cleanup / delivery 的实际内容 | 对应 artifact 文件 |
+| 某个行为是否真的被实现并受保护 | 当前源码 + 自动测试 |
+| 为什么曾这样设计 | `docs/DECISIONS.md` / Git 历史 |
 
-## 仍未完成 / 尚未真实验证
+不要用本文件覆盖以上任何来源。
 
-| 项目 | 状态 |
-|---|---|
-| FunASR / Qwen Provider | 代码已实现；尚未在用户真实 Windows + GPU + 实际模型目录完成独立集成验证 |
-| MCP 客户端 | Server 构建已测；尚未在实际 OpenCode / DSH / Codex 逐个连接验证 |
-| visuals/discovery | 尚未实现正式场景变化 / 稳定态识别 |
-| visuals/cleanup | 多帧真实像素重建、移动覆盖追踪、安全裁剪尚未正式实现 |
-| visuals/alignment | 尚未实现内容级语义对位 |
-| transcript verification | 尚未实现新的源段覆盖 / 更正对账协议 |
-| lifecycle | 已实现任务空间统计 + 保守清理计划（只读/dry-run）；真正删除、归档与 MCP 暴露均未实现 |
-| task schema migration | 当前会明确拒绝未知 schema；真正的版本迁移器尚未需要/实现 |
-| Windows 实机并发 | 跨进程 JSON 锁逻辑有自动测试；仍需真实 Windows 多客户端验证 |
+## 维护入口
 
-## 明确不做
+| 能力域 | 主要代码 | 主要测试 |
+|---|---|---|
+| task / state / artifact 索引 | `agent_videonote/tasks/`, `storage/` | `test_tasks.py`, `test_storage_concurrency.py`, `test_compact_task_summary.py` |
+| workflow 阶段与路由 | `agent_videonote/workflow/`, `workflow/` | `test_workflow.py`, `test_runtime_context_contract.py` |
+| media | `agent_videonote/media/` | 相关 application / recovery 测试 |
+| transcript / SRT | `agent_videonote/transcripts/`, `application/transcript_ops.py` | `test_srt.py`, `test_application_srt.py`, `test_review_cache.py` |
+| ASR Provider / lifecycle / setup | `agent_videonote/asr/` | `test_asr_registry.py`, `test_provider_*`, `test_asr_setup_plan.py` |
+| course context | `agent_videonote/asr/context/` | `test_course_context.py` |
+| visual discovery | `agent_videonote/visuals/discovery/` | `test_visual_discovery.py`, `test_visual_interval.py` |
+| visual cleanup / repair | `agent_videonote/visuals/cleanup/`, `visuals/setup.py` | `test_cleanup_*`, `test_visual_cleanup_phase1.py`, `test_visual_setup.py` |
+| visual alignment | `agent_videonote/visuals/alignment/` | 对应 alignment / delivery 测试 |
+| delivery | `agent_videonote/delivery/`, `application/delivery_ops.py` | `test_delivery.py`, recovery 测试 |
+| MCP | `agent_videonote/adapters/mcp/` | CI Server build / smoke |
 
-- VideoNote-MCP 兼容层或运行依赖
-- generate_note / 自动总结型笔记
-- 通用 LLM Provider
-- 评论 / 弹幕
-- 平台扫码登录
-- GPT 图像 AI
-- 大而全视频平台下载
+## 维护判断规则
 
-后续只根据本表“未完成”项推进，不重复实现已验证能力。
+- 看到这里的路径后，只读要改模块和相邻测试，不默认扫完整仓库。
+- 要判断“已经实现到什么程度”，先看代码和测试，不维护第二份逐功能完成清单。
+- 真实 GPU、模型、FFmpeg、第三方运行体是否可用，必须看 `health` / 实机结果；CI 通过不能替代本机能力判断。
+- 新能力优先扩展现有 Provider / application / artifact 协议；除非出现新的独立职责，不因为文件变长就创建一套新框架。

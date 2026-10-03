@@ -6,7 +6,7 @@ from typing import Any
 
 from agent_videonote.core.types import Artifact
 from agent_videonote.storage.artifacts import read_json, write_json_atomic
-from agent_videonote.workflow.stages import WorkflowStage
+from agent_videonote.workflow.stages import WorkflowStage, rule_file
 
 
 class TaskOperationsMixin:
@@ -68,6 +68,11 @@ class TaskOperationsMixin:
             kind = str(artifact.get("kind") or "unknown")
             artifact_counts[kind] = artifact_counts.get(kind, 0) + 1
 
+        unresolved_counts: dict[str, int] = {}
+        for item in state.unresolved:
+            category = str(item.get("category") or "unknown")
+            unresolved_counts[category] = unresolved_counts.get(category, 0) + 1
+
         core_artifacts: dict[str, dict[str, Any]] = {}
         for name in ("media_info", "transcript", "delivery_report"):
             artifact = state.artifacts.get(name)
@@ -78,16 +83,18 @@ class TaskOperationsMixin:
                 "path": artifact.get("path"),
             }
 
+        stage = WorkflowStage(state.current_stage)
         return {
             "task_id": state.task_id,
             "source": state.source.path,
-            "current_stage": state.current_stage,
+            "current_stage": stage.value,
+            "workflow_file": rule_file(stage),
             "completed_stages": list(state.completed_stages),
             "core_artifacts": core_artifacts,
             "artifact_total": len(state.artifacts),
             "artifact_counts": artifact_counts,
             "unresolved_count": len(state.unresolved),
+            "unresolved_counts": unresolved_counts,
             "event_count": len(state.events),
             "updated_at": state.updated_at,
         }
-

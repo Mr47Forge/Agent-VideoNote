@@ -82,3 +82,19 @@ def test_task_summary_stays_bounded_when_many_review_artifacts_exist(tmp_path: P
     assert result["artifact_counts"]["transcript"] == 1
     assert set(result["core_artifacts"]) == {"transcript"}
     assert "review:0" not in str(result)
+
+def test_task_summary_exposes_machine_routed_workflow_and_bounded_unresolved_counts(tmp_path: Path) -> None:
+    source = tmp_path / "video.mp4"
+    source.write_bytes(b"video")
+    app = _app(tmp_path)
+    state = app.tasks.create_or_resume(source)
+    app.tasks.add_unresolved(state.task_id, "visual_cleanup", {"candidate_id": "vc-0001"})
+    app.tasks.add_unresolved(state.task_id, "visual_cleanup", {"candidate_id": "vc-0002"})
+    app.tasks.add_unresolved(state.task_id, "asr_review", {"start": 1.0, "end": 2.0})
+
+    result = app.get_task(state.task_id)
+
+    assert result["workflow_file"] == "workflow/10-input.md"
+    assert result["unresolved_count"] == 3
+    assert result["unresolved_counts"] == {"visual_cleanup": 2, "asr_review": 1}
+    assert "candidate_id" not in str(result["unresolved_counts"])
