@@ -184,8 +184,13 @@ def create_server():
 
     @mcp.tool()
     def task(task_id: str) -> dict[str, Any]:
-        """读取任务当前阶段、已完成阶段、产物和未解决项数量。"""
+        """读取紧凑任务状态；context_key 变化时再调用 task_context。"""
         return facade.task(task_id)
+
+    @mcp.tool()
+    def task_context(task_id: str) -> dict[str, Any]:
+        """进入/恢复任务时读取一次：返回紧凑任务状态、全局规则和当前唯一阶段胶囊；不依赖宿主读取仓库文件。"""
+        return facade.task_context(task_id)
 
     @mcp.tool()
     def complete_visual(

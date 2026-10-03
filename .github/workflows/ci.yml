@@ -34,3 +34,25 @@ jobs:
       - name: MCP construction smoke test
         run: |
           python -c "from agent_videonote.adapters.mcp.server import create_server; mcp, container = create_server(); container.asr_registry.close_all(); print(type(mcp).__name__)"
+
+      - name: Build wheel and verify packaged workflow rules
+        run: |
+          python -m pip wheel . --no-deps -w dist
+          python - <<'PY'
+          import glob
+          import zipfile
+
+          wheel = glob.glob("dist/agent_videonote-*.whl")
+          assert len(wheel) == 1, wheel
+          expected = {
+              "agent_videonote/workflow/rules/00-core.md",
+              "agent_videonote/workflow/rules/10-input.md",
+              "agent_videonote/workflow/rules/20-transcript.md",
+              "agent_videonote/workflow/rules/30-visual.md",
+              "agent_videonote/workflow/rules/40-delivery.md",
+          }
+          with zipfile.ZipFile(wheel[0]) as archive:
+              names = set(archive.namelist())
+          missing = expected - names
+          assert not missing, sorted(missing)
+          PY

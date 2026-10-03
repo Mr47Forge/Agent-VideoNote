@@ -9,6 +9,14 @@
 - review 是可选角色，不要求必须使用另一个固定模型。
 - 局部复核结果不能自动覆盖主时间轴。
 
+MCP 执行入口：
+
+- 已有可靠 SRT：`ingest_srt`
+- 没有可靠字幕：`transcribe`
+- 分段读取正文：`get_transcript`
+- 仅对明确疑难时间窗复核：`review`
+- 课程术语长期复用：`set_course_context` / `get_course_context`
+
 模型无关原则：
 
 - 工作流不得出现“必须用某型号模型”的规则。

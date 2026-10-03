@@ -20,7 +20,7 @@ Agent-VideoNote/
 │  │  ├─ cleanup/
 │  │  │  └─ strategies/
 │  │  └─ alignment/
-│  ├─ workflow/
+│  │  │  └─ rules/          # 随 Python 包分发，由 task_context 按阶段读取
 │  ├─ delivery/
 │  └─ adapters/
 │     └─ mcp/

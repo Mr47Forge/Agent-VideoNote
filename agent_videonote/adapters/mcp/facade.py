@@ -121,6 +121,9 @@ class McpToolFacade:
     def task(self, task_id: str) -> dict[str, Any]:
         return self.application.get_task(task_id)
 
+    def task_context(self, task_id: str) -> dict[str, Any]:
+        return self.application.get_task_context(task_id)
+
     def discover_visuals(self, task_id: str, budget_seconds: float = 120.0,
                          config: dict[str, Any] | None = None) -> dict[str, Any]:
         return self.application.discover_visuals(

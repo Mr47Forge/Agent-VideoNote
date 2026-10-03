@@ -1,14 +1,10 @@
 # agent_videonote/workflow
 
-工作流状态的机器表示。
+工作流状态与运行规则的唯一包内实现。
 
-这里实现阶段、状态、停止条件和恢复逻辑。
+- `stages.py`：阶段枚举与机械推进顺序。
+- `context.py`：按当前阶段生成有界 `task_context`。
+- `rules/`：随 Python wheel 一起安装的 core + 单阶段规则胶囊。
+- `engine.py`：只负责持久化阶段推进，不判断 ASR/视觉质量。
 
-人类/Agent 可读规则放在仓库根目录 `workflow/`。
-
-两者必须分离：
-
-- 根目录 `workflow/`：规则文本
-- Python `agent_videonote/workflow/`：状态数据结构与机械校验
-
-换会话、换 Agent、换客户端不得自动清空已完成状态。
+运行时不依赖仓库根目录 Markdown，也不要求某个 Agent 宿主识别 `AGENTS.md` 或 Skill。换会话、换 Agent、换客户端时，以持久化 task 状态和 MCP `task_context` 为准。

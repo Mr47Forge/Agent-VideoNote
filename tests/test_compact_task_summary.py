@@ -94,7 +94,22 @@ def test_task_summary_exposes_machine_routed_workflow_and_bounded_unresolved_cou
 
     result = app.get_task(state.task_id)
 
-    assert result["workflow_file"] == "workflow/10-input.md"
+    assert result["context_key"].startswith("input:")
     assert result["unresolved_count"] == 3
     assert result["unresolved_counts"] == {"visual_cleanup": 2, "asr_review": 1}
     assert "candidate_id" not in str(result["unresolved_counts"])
+
+
+def test_task_context_combines_bounded_state_and_current_stage_rules(tmp_path: Path) -> None:
+    source = tmp_path / "video.mp4"
+    source.write_bytes(b"video")
+    app = _app(tmp_path)
+    state = app.tasks.create_or_resume(source)
+
+    result = app.get_task_context(state.task_id)
+
+    assert result["task"]["task_id"] == state.task_id
+    assert result["workflow"]["stage"] == "input"
+    assert result["workflow"]["context_key"] == result["task"]["context_key"]
+    assert "源内容忠实优先" in result["workflow"]["core_rules"]
+    assert "确认源视频身份" in result["workflow"]["stage_rules"]

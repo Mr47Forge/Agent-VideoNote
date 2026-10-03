@@ -8,7 +8,7 @@
 | 问题 | 唯一优先来源 |
 |---|---|
 | 当前任务在哪个阶段、完成了什么 | MCP `task` / 持久化 `state.json` |
-| 当前应该读哪个工作流文件 | `task.workflow_file` |
+| 当前运行规则 | MCP `task_context`；`task.context_key` 用于判断是否需要重新加载 |
 | ASR / Cleanup Provider 当前是否可用 | MCP `health` + 运行配置 / Registry |
 | transcript / visual / cleanup / delivery 的实际内容 | 对应 artifact 文件 |
 | 某个行为是否真的被实现并受保护 | 当前源码 + 自动测试 |
@@ -21,7 +21,7 @@
 | 能力域 | 主要代码 | 主要测试 |
 |---|---|---|
 | task / state / artifact 索引 | `agent_videonote/tasks/`, `storage/` | `test_tasks.py`, `test_storage_concurrency.py`, `test_compact_task_summary.py` |
-| workflow 阶段与路由 | `agent_videonote/workflow/`, `workflow/` | `test_workflow.py`, `test_runtime_context_contract.py` |
+| workflow 阶段与路由 | `agent_videonote/workflow/` | `test_workflow.py`, `test_runtime_context_contract.py` |
 | media | `agent_videonote/media/` | 相关 application / recovery 测试 |
 | transcript / SRT | `agent_videonote/transcripts/`, `application/transcript_ops.py` | `test_srt.py`, `test_application_srt.py`, `test_review_cache.py` |
 | ASR Provider / lifecycle / setup | `agent_videonote/asr/` | `test_asr_registry.py`, `test_provider_*`, `test_asr_setup_plan.py` |

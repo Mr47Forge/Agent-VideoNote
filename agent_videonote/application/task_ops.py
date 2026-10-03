@@ -6,7 +6,8 @@ from typing import Any
 
 from agent_videonote.core.types import Artifact
 from agent_videonote.storage.artifacts import read_json, write_json_atomic
-from agent_videonote.workflow.stages import WorkflowStage, rule_file
+from agent_videonote.workflow.context import build_workflow_context, workflow_context_key
+from agent_videonote.workflow.stages import WorkflowStage
 
 
 class TaskOperationsMixin:
@@ -61,6 +62,14 @@ class TaskOperationsMixin:
     def get_task(self, task_id: str) -> dict[str, Any]:
         return self._task_summary(self.tasks.get(task_id))
 
+    def get_task_context(self, task_id: str) -> dict[str, Any]:
+        state = self.tasks.get(task_id)
+        stage = WorkflowStage(state.current_stage)
+        return {
+            "task": self._task_summary(state),
+            "workflow": build_workflow_context(stage),
+        }
+
     @staticmethod
     def _task_summary(state: Any) -> dict[str, Any]:
         artifact_counts: dict[str, int] = {}
@@ -88,7 +97,7 @@ class TaskOperationsMixin:
             "task_id": state.task_id,
             "source": state.source.path,
             "current_stage": stage.value,
-            "workflow_file": rule_file(stage),
+            "context_key": workflow_context_key(stage),
             "completed_stages": list(state.completed_stages),
             "core_artifacts": core_artifacts,
             "artifact_total": len(state.artifacts),

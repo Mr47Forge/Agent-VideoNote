@@ -7,6 +7,14 @@
 - 按内容语义对位，而不是只按截图时间机械插图。
 - 广告/水印处理优先使用源视频真实像素和可复用本地方法。
 
+MCP 执行入口：
+
+- 扫描候选：`discover_visuals`
+- 分页读取候选：`get_visual_candidates`
+- 优先尝试真实干净源帧：`clean_visual_candidate`
+- 只有明确 mask 时调用指定本地修复 Provider：`repair_visual_candidate`
+- 本阶段工作确实完成后：`complete_visual`
+
 重要边界：
 
 - 不把装饰画面当成必交付图片。

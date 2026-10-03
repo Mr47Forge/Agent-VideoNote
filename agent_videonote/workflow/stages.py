@@ -20,11 +20,11 @@ ORDER: tuple[WorkflowStage, ...] = (
 )
 
 
-RULE_FILES: dict[WorkflowStage, str] = {
-    WorkflowStage.INPUT: "workflow/10-input.md",
-    WorkflowStage.TRANSCRIPT: "workflow/20-transcript.md",
-    WorkflowStage.VISUAL: "workflow/30-visual.md",
-    WorkflowStage.DELIVERY: "workflow/40-delivery.md",
+RULE_RESOURCES: dict[WorkflowStage, str] = {
+    WorkflowStage.INPUT: "10-input.md",
+    WorkflowStage.TRANSCRIPT: "20-transcript.md",
+    WorkflowStage.VISUAL: "30-visual.md",
+    WorkflowStage.DELIVERY: "40-delivery.md",
 }
 
 
@@ -33,8 +33,3 @@ def next_stage(stage: WorkflowStage) -> WorkflowStage | None:
     if index + 1 >= len(ORDER):
         return None
     return ORDER[index + 1]
-
-
-def rule_file(stage: WorkflowStage) -> str | None:
-    """Return the one stage capsule an Agent should load for this task state."""
-    return RULE_FILES.get(stage)

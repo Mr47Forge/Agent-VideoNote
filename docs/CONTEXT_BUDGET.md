@@ -4,19 +4,39 @@
 
 ## 目标
 
-MCP 未启动前，Agent 的项目上下文保持在极小范围；启动后由机器状态决定只加载一个阶段胶囊，避免把架构史、许可证、模块说明和源码全量灌入上下文。
+不同 Agent 宿主对 `AGENTS.md` / Skill 的自动加载能力并不一致，因此运行上下文不能依赖“宿主会自己去读某个仓库文件”。
+
+跨 Agent 的统一链路是：
+
+```text
+MCP
+ ↓
+prepare / task
+ ↓
+context_key
+ ↓
+新会话或 key 变化时 task_context
+ ↓
+core_rules + 当前唯一 stage_rules
+```
+
+工作流 Markdown 随 Python 包安装在：
+
+`agent_videonote/workflow/rules/`
+
+因此源码仓库、当前工作目录和宿主类型都不是运行前提。
 
 ## 三类资料
 
-### A. 运行必读
+### A. 运行上下文
 
-仅：
+只包含：
 
-- `AGENTS.md`
-- `workflow/00-core.md`
-- `prepare` / `task` 返回 `workflow_file` 后，对应的一份阶段文件
+- MCP `task` 的有界机器状态；
+- `task_context` 返回的 `core_rules`；
+- 当前唯一 `stage_rules`。
 
-阶段映射不在 prompt 中手工维护，避免工作流文件改名或新增阶段后出现第二份路由事实。
+`AGENTS.md` 只是能识别它的宿主的启动提示，不是跨 Agent 的运行真源。
 
 ### B. 维护按需读
 
@@ -42,44 +62,22 @@ MCP 未启动前，Agent 的项目上下文保持在极小范围；启动后由�
 - 历史任务数据
 - 全仓测试文件
 
-这些资料只在架构追溯、发布、许可证审计或专项维护时读取。
-
-## 冷启动顺序
-
-```text
-AGENTS.md
-  ↓
-workflow/00-core.md
-  ↓
-启动/连接 MCP
-  ↓
-health + prepare/task
-  ↓
-task.workflow_file
-  ↓
-只加载这一份阶段规则
-  ↓
-执行
-```
-
-如果 MCP 启动失败，只读取与错误直接相关的入口、配置和测试，不允许用“全仓扫描”作为默认排障方式。
-
 ## 静态预算
 
-CI 对默认运行提示词执行硬预算：
+CI 对包内运行规则执行硬预算：
 
-- `AGENTS.md` ≤ 2,500 bytes
-- `workflow/00-core.md` ≤ 2,000 bytes
+- `core_rules` ≤ 2,000 bytes
 - 单个阶段胶囊 ≤ 3,000 bytes
-- `AGENTS + core + 最大阶段胶囊` ≤ 7,000 bytes
+- `core_rules + 最大阶段胶囊` ≤ 5,000 bytes
+- `AGENTS.md` ≤ 2,500 bytes
 
-预算测试只约束默认运行链，不限制维护文档长度。需要更深资料时按问题局部读取，而不是把参考资料重新塞回默认上下文。
+另外 CI 必须验证构建出的 wheel 实际包含全部规则文件，防止“源码目录能跑、安装包缺规则”。
 
 ## 预算原则
 
-- 不把 README 当运行 prompt。
-- 不重复加载已经由 MCP 状态表达的信息。
+- 不把 README / docs 当运行 prompt。
 - 不通过对话记忆保存任务进度。
-- `task()` 只返回有界摘要；大量 artifact、events、unresolved 详情不默认展开。
+- `task()` 只返回有界状态摘要。
+- `task_context()` 只在新会话或 `context_key` 变化后读取一次，不在每个工具调用里重复返回规则。
 - 大文本按段读取；只有当前任务确需时才打开具体 artifact。
 - 文档用于维护，机器状态用于运行。

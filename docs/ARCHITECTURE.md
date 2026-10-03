@@ -41,7 +41,7 @@ storage/            持久化实现
 core/               最小共享类型、配置、错误
 ```
 
-`workflow/` 是规则和阶段定义，不直接承担 FFmpeg、ASR、图片算法或文件数据库实现。
+`agent_videonote/workflow/` 保存阶段定义与随 Python 包分发的运行规则，不直接承担 FFmpeg、ASR、图片算法或文件数据库实现。
 
 `delivery/` 只负责最终交付结构和校验，不负责生成内容。
 
@@ -149,10 +149,10 @@ application 按能力与配置调用 Provider。
 
 1. **任务运行状态**：`tasks/<task-id>/state.json` 是阶段、artifact 索引、unresolved 和事件的机器真源，只通过 `TaskService` / `WorkflowEngine` 修改。
 2. **产物内容**：具体 transcript、visual discovery、cleanup、delivery 等 artifact 文件是其内容真源；`state.json` 只保存索引和摘要，不复制正文。
-3. **Agent 运行路由**：`AGENTS.md` 只定义启动/按需读取规则；`workflow/00-core.md` 保存全程运行不变量；`prepare` / `task` 返回的 `workflow_file` 决定当前唯一阶段胶囊。
+3. **Agent 运行路由**：`AGENTS.md` 只是宿主可选启动提示；跨 Agent 真正统一的运行入口是 MCP `task_context`。阶段规则随 Python 包位于 `agent_videonote/workflow/rules/`，由 `context_key` 标识版本；Agent 不需要读取源码仓库文件。
 4. **运行能力与环境**：ASR / Cleanup Provider 是否可用，以运行配置、Registry 和 `health` 的实际结果为准。
 5. **维护文档**：`docs/**`、模块 README、`THIRD_PARTY.md` 用于解释架构、许可证和历史决策，不得反向覆盖机器状态或被普通 PROCESS 当作运行真源。
 
-`task()` 是对 `state.json` 的有界派生视图，不产生第二份状态；它只返回当前阶段、阶段规则文件、核心 artifact、分类计数等恢复任务真正需要的信息。新增运行状态字段时，优先扩展机器状态/派生摘要，不在 Markdown 中另建平行状态表。
+`task()` 是对 `state.json` 的有界派生视图，不产生第二份状态；它返回当前阶段、`context_key`、核心 artifact 和分类计数。`task_context()` 再按这个机器状态读取包内唯一规则资源，返回 `core_rules + stage_rules`。新增运行状态字段时，优先扩展机器状态/派生摘要，不在 Markdown 中另建平行状态表。
 
-同理，本项目不新增一个与 `AGENTS.md + workflow/` 平行的 `SKILL.md + task-*` 运行体系。当前阶段胶囊已经承担按需加载职责，再复制一套只会增加同步成本。
+同理，本项目不新增一个与 MCP runtime 平行的 `SKILL.md + task-*` 运行体系。Skill 宿主能力不一致，而 MCP 是 Codex / DSH / OpenCode 等客户端共同的运行边界；阶段胶囊通过 `task_context` 统一下发。
