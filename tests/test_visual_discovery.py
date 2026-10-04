@@ -418,7 +418,7 @@ def test_empty_sampling_chunk_does_not_advance_checkpoint(tmp_path):
     sampler = EmptySecondChunkSampler(frames)
     config = DiscoveryConfig(chunk_seconds=10)
 
-    with pytest.raises(RuntimeError, match="expected 5"):
+    with pytest.raises(RuntimeError, match="returned no frames"):
         run(
             tmp_path,
             frames,
@@ -435,32 +435,31 @@ def test_empty_sampling_chunk_does_not_advance_checkpoint(tmp_path):
     assert sampler.starts == [0.0, 10.0]
 
 
-def test_partial_sampling_chunk_does_not_advance_checkpoint(tmp_path):
+def test_partial_sampling_chunk_resumes_from_actual_coverage(tmp_path):
     frames = [A] * 10
 
     class ShortSecondChunkSampler(FakeSampler):
         def sample(self, source, start, duration, interval):
             result = super().sample(source, start, duration, interval)
-            if start >= 10.0:
+            if abs(start - 10.0) < 0.001:
                 return result[:-1]
             return result
 
     sampler = ShortSecondChunkSampler(frames)
     config = DiscoveryConfig(chunk_seconds=10)
 
-    with pytest.raises(RuntimeError, match="expected 5"):
-        run(
-            tmp_path,
-            frames,
-            config=config,
-            budget=20,
-            sampler=sampler,
-            media=FakeMedia(),
-        )
+    result, _, _ = run(
+        tmp_path,
+        frames,
+        config=config,
+        budget=20,
+        sampler=sampler,
+        media=FakeMedia(),
+    )
 
-    progress = read_json(tmp_path / "visual" / "discovery" / "progress.json")
-    assert progress["scanned_until"] == 10.0
-    assert progress["complete"] is False
+    assert result["complete"] is True
+    assert result["scanned_duration"] == 20.0
+    assert sampler.starts == [0.0, 10.0, 18.0]
 
 
 def test_ffmpeg_sampler_labels_short_final_bin_before_requested_end(monkeypatch):
@@ -484,7 +483,7 @@ def test_ffmpeg_sampler_labels_short_final_bin_before_requested_end(monkeypatch)
     assert samples[-1].second < 11.0
 
 
-def test_ffmpeg_sampler_rejects_short_successful_output(monkeypatch):
+def test_ffmpeg_sampler_keeps_partial_output_without_inventing_frames(monkeypatch):
     class Result:
         stdout = A * 5
         stderr = b""
@@ -494,13 +493,15 @@ def test_ffmpeg_sampler_rejects_short_successful_output(monkeypatch):
         lambda *args, **kwargs: Result(),
     )
 
-    with pytest.raises(RuntimeError, match="returned 5 frames; expected 6"):
-        FFmpegFrameSampler("ffmpeg").sample(
-            Path("video.mp4"),
-            start=0.0,
-            duration=11.0,
-            interval=2.0,
-        )
+    samples = FFmpegFrameSampler("ffmpeg").sample(
+        Path("video.mp4"),
+        start=0.0,
+        duration=11.0,
+        interval=2.0,
+    )
+
+    assert len(samples) == 5
+    assert samples[-1].second == 9.0
 
 
 def test_completed_discovery_prunes_orphan_candidate_images_on_reentry(tmp_path):

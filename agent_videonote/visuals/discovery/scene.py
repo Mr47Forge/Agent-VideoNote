@@ -99,16 +99,16 @@ class FFmpegFrameSampler:
         if len(result.stdout) % FRAME_BYTES:
             raise RuntimeError("visual sampling returned an incomplete frame")
         actual = len(result.stdout) // FRAME_BYTES
-        if actual != count:
+        if actual > count:
             raise RuntimeError(
-                f"visual sampling returned {actual} frames; expected {count} "
+                f"visual sampling returned {actual} frames; expected at most {count} "
                 f"for {duration:.3f}s at {interval:.3f}s interval"
             )
         # Label each frame at the center of its sampling bin. The last bin can
         # be shorter than interval, so its center must remain strictly before
         # the requested end instead of being labeled at video duration.
         samples: list[FrameSample] = []
-        for i in range(count):
+        for i in range(actual):
             bin_start = i * interval
             bin_end = min(duration, (i + 1) * interval)
             second = start + (bin_start + bin_end) / 2
@@ -208,16 +208,33 @@ class SceneContentDiscovery:
             expected_samples = math.ceil(
                 (end - start) / self.config.sampling_interval
             )
-            if len(samples) != expected_samples:
+            if not samples:
+                raise RuntimeError(
+                    f"visual sampling returned no frames for "
+                    f"{start:.3f}-{end:.3f}; checkpoint was not advanced"
+                )
+            if len(samples) > expected_samples:
                 raise RuntimeError(
                     f"visual sampling returned {len(samples)} frames for "
-                    f"{start:.3f}-{end:.3f}; expected {expected_samples}; "
-                    "checkpoint was not advanced"
+                    f"{start:.3f}-{end:.3f}; expected at most {expected_samples}"
                 )
             for sample in samples:
                 self._observe(progress, sample, source, image_dir)
-            progress["scanned_until"] = round(end, 3)
-            progress["complete"] = end >= duration - 0.001
+            covered_until = (
+                end
+                if len(samples) == expected_samples
+                else min(
+                    end,
+                    start + len(samples) * self.config.sampling_interval,
+                )
+            )
+            if covered_until <= start + 0.001:
+                raise RuntimeError(
+                    "visual sampling made no forward progress; "
+                    "checkpoint was not advanced"
+                )
+            progress["scanned_until"] = round(covered_until, 3)
+            progress["complete"] = covered_until >= duration - 0.001
             write_json_atomic(manifest_path, progress)
             self._prune_superseded(image_dir, progress)
         self._prune_superseded(image_dir, progress)
