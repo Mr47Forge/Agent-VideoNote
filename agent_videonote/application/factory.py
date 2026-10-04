@@ -23,7 +23,6 @@ from agent_videonote.tasks.service import TaskService
 from agent_videonote.visuals.cleanup.factory import build_default_cleanup_registry
 from agent_videonote.visuals.cleanup.registry import CleanupRegistry
 from agent_videonote.visuals.runtime_config import VisualRuntimeConfig
-from agent_videonote.visuals.service import VisualService
 from agent_videonote.workflow.engine import WorkflowEngine
 
 
@@ -34,7 +33,6 @@ class RuntimeContainer:
     cleanup_registry: CleanupRegistry
     contexts: CourseContextRepository
     application: ApplicationService
-    visuals: VisualService
     startup_warnings: tuple[str, ...] = ()
 
 
@@ -85,15 +83,12 @@ def build_runtime(
         visual_config_path=visual_runtime_path,
         cleanup_registry=cleanup_registry,
     )
-    visuals = VisualService(tasks, cleanup_registry)
-
     return RuntimeContainer(
         config=runtime_config,
         asr_registry=asr_registry,
         cleanup_registry=cleanup_registry,
         contexts=contexts,
         application=application,
-        visuals=visuals,
         startup_warnings=all_startup_warnings,
     )
 

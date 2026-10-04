@@ -182,8 +182,17 @@ class SceneContentDiscovery:
         while progress["scanned_until"] < stop - 0.001:
             start = progress["scanned_until"]
             end = min(stop, start + self.config.chunk_seconds)
-            samples = self.sampler.sample(source, start, end - start,
-                                          self.config.sampling_interval)
+            samples = self.sampler.sample(
+                source,
+                start,
+                end - start,
+                self.config.sampling_interval,
+            )
+            if not samples:
+                raise RuntimeError(
+                    f"visual sampling returned no frames for {start:.3f}-{end:.3f}; "
+                    "checkpoint was not advanced"
+                )
             for sample in samples:
                 self._observe(progress, sample, source, image_dir)
             progress["scanned_until"] = round(end, 3)

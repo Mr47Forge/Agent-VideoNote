@@ -14,6 +14,7 @@ from agent_videonote.visuals.cleanup.providers.common import (
 )
 from agent_videonote.visuals.cleanup.types import CleanupRequest, CleanupResult
 from agent_videonote.visuals.runtime_config import VisualRuntimeConfig
+from agent_videonote.visuals.setup import BIG_LAMA_EXPECTED_SIZE, STTN_EXPECTED_SIZE
 
 
 class _VsrBase:
@@ -56,6 +57,7 @@ class _VsrBase:
             "kind": self.kind,
             "requires_mask": True,
             "requires_gpu": self.requires_temporal_frames,
+            "may_use_gpu": True,
             "external_runtime": True,
             "single_python": sys.executable,
             "automatic_text_removal": False,
@@ -130,7 +132,11 @@ class VsrLamaCleanupStrategy(_VsrBase):
     def _model_problems(self) -> list[str]:
         if self.model is None:
             return ["Big-LaMa model is not installed"]
-        return [] if self.model.is_file() else [f"Big-LaMa model not found: {self.model}"]
+        return _model_size_problems(
+            self.model,
+            expected_size=BIG_LAMA_EXPECTED_SIZE,
+            label="Big-LaMa",
+        )
 
     def clean(self, request: CleanupRequest) -> CleanupResult:
         mask = explicit_mask_path(request)
@@ -159,7 +165,11 @@ class VsrSttnCleanupStrategy(_VsrBase):
     def _model_problems(self) -> list[str]:
         if self.model is None:
             return ["STTN model is not installed"]
-        return [] if self.model.is_file() else [f"STTN model not found: {self.model}"]
+        return _model_size_problems(
+            self.model,
+            expected_size=STTN_EXPECTED_SIZE,
+            label="STTN",
+        )
 
     def clean(self, request: CleanupRequest) -> CleanupResult:
         mask = explicit_mask_path(request)
@@ -213,3 +223,14 @@ def _failed(strategy_id: str, reason: str) -> CleanupResult:
             "provider_reason": reason,
         },
     )
+
+
+def _model_size_problems(path: Path, *, expected_size: int, label: str) -> list[str]:
+    if not path.is_file():
+        return [f"{label} model not found: {path}"]
+    actual = path.stat().st_size
+    if actual != expected_size:
+        return [
+            f"{label} model size mismatch: {actual} != {expected_size}: {path}"
+        ]
+    return []

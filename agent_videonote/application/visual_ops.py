@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import math
 import re
 import shutil
@@ -38,7 +39,7 @@ class VisualOperationsMixin:
         if info.duration is None:
             raise ValueError("video duration is unavailable")
         manifest_path = self.task_dir(task_id) / "visual" / "discovery" / "progress.json"
-        reused = bool(manifest_path.is_file() and read_json(manifest_path).get("complete"))
+        reused = manifest_path.is_file()
         if config is None and manifest_path.is_file():
             config = read_json(manifest_path)["config"]
         scanner = SceneContentDiscovery(
@@ -75,6 +76,10 @@ class VisualOperationsMixin:
         if start < 0 or not 1 <= limit <= 50:
             raise ValueError("start must be nonnegative and limit must be between 1 and 50")
         page = self.get_visual_candidates(task_id, start=start, limit=limit)
+        if not page["complete"]:
+            raise InvalidTransitionError(
+                "visual discovery must complete before persistent cleanup"
+            )
         started = time.perf_counter()
         counts = {"clean": 0, "resolved": 0, "unresolved": 0}
         resolved: list[dict[str, Any]] = []
@@ -138,6 +143,10 @@ class VisualOperationsMixin:
                 or manifest.get("source_fingerprint") != source.fingerprint
                 or Path(manifest.get("source_path", "")).resolve() != Path(source.path)):
             raise ValueError("visual candidate source does not match the current task")
+        if not manifest.get("complete"):
+            raise InvalidTransitionError(
+                "visual discovery must complete before persistent cleanup"
+            )
         candidate = next((item for item in manifest.get("candidates", [])
                           if item.get("candidate_id") == candidate_id), None)
         if candidate is None:
@@ -261,6 +270,10 @@ class VisualOperationsMixin:
                 or manifest.get("source_fingerprint") != source.fingerprint
                 or Path(manifest.get("source_path", "")).resolve() != Path(source.path)):
             raise ValueError("visual candidate source does not match the current task")
+        if not manifest.get("complete"):
+            raise InvalidTransitionError(
+                "visual discovery must complete before persistent repair"
+            )
         candidate = next(
             (item for item in manifest.get("candidates", [])
              if item.get("candidate_id") == candidate_id),
@@ -280,14 +293,22 @@ class VisualOperationsMixin:
             raise ValueError("visual candidate provenance does not match the current task")
 
         mask_hash = _file_sha256(mask)
+        temporal = provider in ("vsr-sttn", "propainter")
+        request_key = _repair_request_key(
+            provider=provider,
+            mask_sha256=mask_hash,
+            window_seconds=window_seconds if temporal else None,
+            interval=interval if temporal else None,
+        )
         repair_dir = task_dir / "visual" / "repairs"
-        key = f"{candidate_id}.{provider}.{mask_hash[:12]}"
+        key = f"{candidate_id}.{provider}.{request_key}"
         record_path = repair_dir / f"{key}.json"
         if record_path.is_file():
             record = read_json(record_path)
             if (record.get("source_fingerprint") != source.fingerprint
                     or record.get("mask_sha256") != mask_hash
-                    or record.get("provider") != provider):
+                    or record.get("provider") != provider
+                    or record.get("request_key") != request_key):
                 raise ValueError("persisted visual repair result does not match request")
             if record.get("status") == "resolved":
                 output = record.get("output_path")
@@ -296,13 +317,13 @@ class VisualOperationsMixin:
                 return _repair_summary(record)
 
         output_path = task_dir / "visual" / "repaired" / (
-            f"{candidate_id}.{provider}{image_path.suffix.lower() or '.jpg'}"
+            f"{key}{image_path.suffix.lower() or '.jpg'}"
         )
         temp_dir = task_dir / "temp" / "visual_repair" / key
         nearby: list[str] = []
         target_index = 0
         try:
-            if provider in ("vsr-sttn", "propainter"):
+            if temporal:
                 temp_dir.mkdir(parents=True, exist_ok=True)
                 start = max(0.0, timestamp - window_seconds)
                 end = min(duration, timestamp + window_seconds)
@@ -337,20 +358,30 @@ class VisualOperationsMixin:
                     "target_index": target_index,
                 },
             )
-            result = self.cleanup_registry.resolve(request)
+            if selected.get("may_use_gpu") or selected.get("requires_gpu"):
+                with self._gpu_operation_lock:
+                    for loaded in tuple(self.asr_registry.loaded_providers()):
+                        if loaded.get("gpu"):
+                            self.asr_registry.release_provider(str(loaded["provider_id"]))
+                    result = self.cleanup_registry.resolve(request)
+            else:
+                result = self.cleanup_registry.resolve(request)
         finally:
             if temp_dir.exists():
                 shutil.rmtree(temp_dir, ignore_errors=True)
 
         record = {
-            "schema_version": 1,
+            "schema_version": 2,
             "candidate_id": candidate_id,
             "provider": provider,
+            "request_key": request_key,
             "source_fingerprint": source.fingerprint,
             "original_timestamp": timestamp,
             "original_image_path": str(image_path),
             "mask_path": str(mask),
             "mask_sha256": mask_hash,
+            "window_seconds": window_seconds if temporal else None,
+            "interval": interval if temporal else None,
             "status": result.status,
             "resolved": result.resolved,
             "output_path": result.output_path,
@@ -373,21 +404,18 @@ class VisualOperationsMixin:
                 task_id, "visual_cleanup",
                 Artifact(kind="visual_cleanup", path=str(result_path.parent)),
             )
-        if record.get("status") == "unresolved" and not any(
-                item.get("category") == "visual_cleanup"
-                and item.get("candidate_id") == candidate_id
-                for item in self.tasks.get(task_id).unresolved):
+        if record.get("status") == "unresolved":
             self.tasks.add_unresolved(
-                task_id, "visual_cleanup",
-                {"candidate_id": candidate_id,
-                 "reason": record["unresolved_reason"],
-                 "record_path": str(result_path)},
+                task_id,
+                "visual_cleanup",
+                {
+                    "candidate_id": candidate_id,
+                    "reason": record["unresolved_reason"],
+                    "record_path": str(result_path),
+                },
             )
         elif record.get("status") in ("clean", "resolved") or record.get("resolved") is True:
-            if any(item.get("category") == "visual_cleanup"
-                   and item.get("candidate_id") == candidate_id
-                   for item in self.tasks.get(task_id).unresolved):
-                self.tasks.remove_unresolved(task_id, "visual_cleanup", candidate_id)
+            self.tasks.remove_unresolved(task_id, "visual_cleanup", candidate_id)
 
     @staticmethod
     def _cleanup_summary(record: dict[str, Any]) -> dict[str, Any]:
@@ -411,10 +439,31 @@ def _file_sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
+def _repair_request_key(
+    *,
+    provider: str,
+    mask_sha256: str,
+    window_seconds: float | None,
+    interval: float | None,
+) -> str:
+    payload = json.dumps(
+        {
+            "provider": provider,
+            "mask_sha256": mask_sha256,
+            "window_seconds": window_seconds,
+            "interval": interval,
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return hashlib.sha256(payload).hexdigest()[:16]
+
+
 def _repair_summary(record: dict[str, Any]) -> dict[str, Any]:
     return {
         "candidate_id": record["candidate_id"],
         "provider": record["provider"],
+        "request_key": record.get("request_key"),
         "status": record["status"],
         "resolved": record["resolved"],
         "original_timestamp": record["original_timestamp"],

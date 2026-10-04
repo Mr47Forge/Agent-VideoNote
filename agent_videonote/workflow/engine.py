@@ -16,9 +16,25 @@ class WorkflowEngine:
         self,
         task_id: str,
         evidence: dict[str, object] | None = None,
+        *,
+        expected_stage: WorkflowStage | str | None = None,
     ) -> TaskState:
+        expected = (
+            WorkflowStage(expected_stage)
+            if expected_stage is not None
+            else None
+        )
+
         def change(state: TaskState) -> None:
             current = WorkflowStage(state.current_stage)
+
+            if expected is not None and current != expected:
+                if expected.value in state.completed_stages:
+                    return
+                raise InvalidTransitionError(
+                    f"stale workflow completion: expected {expected.value}, "
+                    f"current stage is {current.value}"
+                )
 
             if current == WorkflowStage.DONE:
                 return
@@ -53,9 +69,10 @@ class WorkflowEngine:
                     "task must reach delivery completion before DONE"
                 )
 
-            if WorkflowStage.DONE.value not in state.completed_stages:
-                state.completed_stages.append(WorkflowStage.DONE.value)
+            if WorkflowStage.DONE.value in state.completed_stages:
+                return
 
+            state.completed_stages.append(WorkflowStage.DONE.value)
             state.add_event("workflow.done", {"evidence": evidence or {}})
 
         return self.store.mutate(task_id, change)

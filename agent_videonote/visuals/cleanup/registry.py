@@ -51,6 +51,7 @@ class CleanupRegistry:
                     "kind": "source_replacement",
                     "requires_mask": False,
                     "requires_gpu": False,
+                    "may_use_gpu": False,
                     "external_runtime": False,
                 })
         return tuple(items)

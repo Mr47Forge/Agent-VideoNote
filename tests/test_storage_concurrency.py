@@ -5,6 +5,7 @@ from pathlib import Path
 
 from agent_videonote.storage.json_store import JsonTaskStore
 from agent_videonote.tasks.models import TaskState
+from agent_videonote.tasks.service import TaskService
 from agent_videonote.core.types import SourceIdentity
 
 
@@ -56,3 +57,33 @@ def test_stale_short_lock_is_recovered(tmp_path: Path) -> None:
 
     assert any(event.type == "after-stale-lock" for event in state.events)
     assert not lock_path.exists()
+
+
+def test_unresolved_upsert_is_atomic_across_service_instances(tmp_path: Path) -> None:
+    store_a, task_id = _state(tmp_path)
+    store_b = JsonTaskStore(tmp_path / "tasks")
+    service_a = TaskService(store_a)
+    service_b = TaskService(store_b)
+
+    def add(index: int) -> None:
+        service = service_a if index % 2 == 0 else service_b
+        service.add_unresolved(
+            task_id,
+            "visual_cleanup",
+            {"candidate_id": "vc-0001", "reason": "needs-review"},
+        )
+
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        list(pool.map(add, range(40)))
+
+    state = store_a.load(task_id)
+    matching = [
+        item for item in state.unresolved
+        if item.get("category") == "visual_cleanup"
+        and item.get("candidate_id") == "vc-0001"
+    ]
+    assert matching == [{
+        "category": "visual_cleanup",
+        "candidate_id": "vc-0001",
+        "reason": "needs-review",
+    }]

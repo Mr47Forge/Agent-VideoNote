@@ -56,10 +56,29 @@ class TaskService:
         return self._store.mutate(task_id, change)
 
     def add_unresolved(self, task_id: str, category: str, detail: dict[str, Any]) -> TaskState:
+        """Atomically add or update one unresolved item without duplicates."""
         def change(state: TaskState) -> None:
             item = {"category": category, **detail}
+            candidate_id = item.get("candidate_id")
+            for index, existing in enumerate(state.unresolved):
+                same_identity = (
+                    existing.get("category") == category
+                    and candidate_id is not None
+                    and existing.get("candidate_id") == candidate_id
+                )
+                if same_identity or existing == item:
+                    if existing != item:
+                        state.unresolved[index] = item
+                        state.add_event(
+                            "unresolved.updated",
+                            {"category": category, "candidate_id": candidate_id},
+                        )
+                    return
             state.unresolved.append(item)
-            state.add_event("unresolved.added", {"category": category})
+            state.add_event(
+                "unresolved.added",
+                {"category": category, "candidate_id": candidate_id},
+            )
 
         return self._store.mutate(task_id, change)
 

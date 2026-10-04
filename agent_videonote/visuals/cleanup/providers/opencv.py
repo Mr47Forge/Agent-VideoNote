@@ -25,6 +25,7 @@ class OpenCVInpaintStrategy:
             "kind": "image_inpaint",
             "requires_mask": True,
             "requires_gpu": False,
+            "may_use_gpu": False,
             "external_runtime": False,
             "automatic_text_removal": False,
             "reason": None if available else "opencv-python is not installed",

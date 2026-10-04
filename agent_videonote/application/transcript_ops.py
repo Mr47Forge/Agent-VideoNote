@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import time
+from contextlib import nullcontext
 from pathlib import Path
 from typing import Any
 
@@ -88,6 +89,7 @@ class TranscriptOperationsMixin:
             if state.current_stage == WorkflowStage.TRANSCRIPT.value:
                 self.workflow.complete_current(
                     task_id,
+                    expected_stage=WorkflowStage.TRANSCRIPT,
                     evidence={
                         "transcript": str(path),
                         "source_id": summary.get("source_id"),
@@ -119,6 +121,7 @@ class TranscriptOperationsMixin:
         )
         self.workflow.complete_current(
             task_id,
+            expected_stage=WorkflowStage.TRANSCRIPT,
             evidence={"transcript": str(path), "source_id": transcript.source_id},
         )
         summary = self._transcript_summary(task_id, path)
@@ -156,6 +159,7 @@ class TranscriptOperationsMixin:
             if state.current_stage == WorkflowStage.TRANSCRIPT.value:
                 self.workflow.complete_current(
                     task_id,
+                    expected_stage=WorkflowStage.TRANSCRIPT,
                     evidence={
                         "transcript": str(path),
                         "source_id": summary.get("source_id"),
@@ -181,43 +185,63 @@ class TranscriptOperationsMixin:
         }
         required |= _context_capabilities(ctx)
         provider = self.asr_registry.get(provider_id, required)
-
-        audio_path = self.task_dir(task_id) / "source" / "audio.wav"
-        if not audio_path.is_file():
-            self.media.extract_audio(state.source.path, audio_path)
-
-        transcript = provider.transcribe(
-            TranscriptionRequest(audio_path=audio_path, context=ctx)
+        gpu_guard = (
+            self._gpu_operation_lock
+            if AsrCapability.GPU in provider.capabilities
+            else nullcontext()
         )
-        problems = validate_transcript(transcript)
-        if problems:
-            raise CapabilityError("invalid provider transcript: " + "; ".join(problems))
 
-        path = self._save_transcript(task_id, transcript)
-        if read_json(path) != json.loads(json.dumps(transcript.to_dict(), ensure_ascii=False)):
-            raise CapabilityError("persisted provider transcript does not match validated result")
-        self.tasks.register_artifact(
-            task_id,
-            "transcript",
-            Artifact(
-                kind="transcript",
-                path=str(path),
-                metadata={
-                    "source_id": transcript.source_id,
-                    "course_id": course_id,
-                },
-            ),
-        )
-        self.workflow.complete_current(
-            task_id,
-            evidence={"transcript": str(path), "source_id": transcript.source_id},
-        )
-        summary = self._transcript_summary(task_id, path)
-        summary["task"] = self._task_summary(self.tasks.get(task_id))
-        summary["reused"] = False
-        self.asr_registry.release_provider(provider_id)
-        summary["elapsed_seconds"] = round(time.perf_counter() - started, 3)
-        return summary
+        with gpu_guard:
+            try:
+                audio_path = self.task_dir(task_id) / "source" / "audio.wav"
+                if not audio_path.is_file():
+                    self.media.extract_audio(state.source.path, audio_path)
+
+                transcript = provider.transcribe(
+                    TranscriptionRequest(audio_path=audio_path, context=ctx)
+                )
+                problems = validate_transcript(transcript)
+                if problems:
+                    raise CapabilityError(
+                        "invalid provider transcript: " + "; ".join(problems)
+                    )
+
+                path = self._save_transcript(task_id, transcript)
+                if read_json(path) != json.loads(
+                    json.dumps(transcript.to_dict(), ensure_ascii=False)
+                ):
+                    raise CapabilityError(
+                        "persisted provider transcript does not match validated result"
+                    )
+                self.tasks.register_artifact(
+                    task_id,
+                    "transcript",
+                    Artifact(
+                        kind="transcript",
+                        path=str(path),
+                        metadata={
+                            "source_id": transcript.source_id,
+                            "course_id": course_id,
+                        },
+                    ),
+                )
+                self.workflow.complete_current(
+                    task_id,
+                    expected_stage=WorkflowStage.TRANSCRIPT,
+                    evidence={
+                        "transcript": str(path),
+                        "source_id": transcript.source_id,
+                    },
+                )
+                summary = self._transcript_summary(task_id, path)
+                summary["task"] = self._task_summary(self.tasks.get(task_id))
+                summary["reused"] = False
+                summary["elapsed_seconds"] = round(
+                    time.perf_counter() - started, 3
+                )
+                return summary
+            finally:
+                self.asr_registry.release_provider(provider_id)
 
     def get_transcript(
         self,
@@ -343,13 +367,23 @@ class TranscriptOperationsMixin:
                 speed=speed,
             )
 
-        transcript = provider.transcribe(
-            TranscriptionRequest(
-                audio_path=audio_path,
-                context=ctx,
-                source_range=window,
-            )
+        gpu_guard = (
+            self._gpu_operation_lock
+            if AsrCapability.GPU in provider.capabilities
+            else nullcontext()
         )
+        with gpu_guard:
+            try:
+                transcript = provider.transcribe(
+                    TranscriptionRequest(
+                        audio_path=audio_path,
+                        context=ctx,
+                        source_range=window,
+                    )
+                )
+            except Exception:
+                self.asr_registry.release_provider(provider_id)
+                raise
         result = transcript.to_dict()
         result["source_range"] = {"start": start, "end": end}
         result["speed"] = speed

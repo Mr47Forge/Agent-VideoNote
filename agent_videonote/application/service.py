@@ -20,6 +20,7 @@ from agent_videonote.tasks.service import TaskService
 from agent_videonote.visuals.cleanup.factory import build_default_cleanup_registry
 from agent_videonote.visuals.cleanup.registry import CleanupRegistry
 from agent_videonote.workflow.engine import WorkflowEngine
+from threading import RLock
 
 
 class ApplicationService(
@@ -64,3 +65,7 @@ class ApplicationService(
         self.asr_config_path = asr_config_path
         self.visual_config_path = visual_config_path
         self.cleanup_registry = cleanup_registry or build_default_cleanup_registry()
+        # One application-level gate coordinates GPU work across ASR and visual
+        # providers. ASR's registry alone cannot see GPU work launched by visual
+        # cleanup subprocesses.
+        self._gpu_operation_lock = RLock()

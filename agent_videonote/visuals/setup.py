@@ -57,23 +57,37 @@ _PROPAINTER_PARTS = (
     ("backend/models/propainter/ProPainter_4.pth", "aff41a08552c472a88d278361472b24a07cf2bee", 7780510),
 )
 
+BIG_LAMA_EXPECTED_SIZE = sum(item[2] for item in _BIG_LAMA_PARTS)
+PROPAINTER_EXPECTED_SIZE = sum(item[2] for item in _PROPAINTER_PARTS)
+STTN_EXPECTED_SIZE = 66252587
+RAFT_EXPECTED_SIZE = 21108000
+FLOW_COMPLETION_EXPECTED_SIZE = 20348681
+
+_VSR_REQUIRED_FILES = (
+    "backend/__init__.py",
+    "backend/inpaint/lama_inpaint.py",
+    "backend/inpaint/sttn_det_inpaint.py",
+    "backend/inpaint/propainter_inpaint.py",
+    "backend/tools/inpaint_tools.py",
+)
+
 _DIRECT_MODELS = (
     (
         "backend/models/sttn-det/sttn.pth",
         "4b9c2458591463af28c8f5b7044a09f8689f87c1",
-        66252587,
+        STTN_EXPECTED_SIZE,
         "sttn.pth",
     ),
     (
         "backend/models/propainter/raft-things.pth",
         "dbe6f9ffb66f7479f3c6ca2111484670dc6bdc54",
-        21108000,
+        RAFT_EXPECTED_SIZE,
         "propainter/raft-things.pth",
     ),
     (
         "backend/models/propainter/recurrent_flow_completion.pth",
         "28d11eaa68d65880ccae01c1bf9a9d6fe40490ed",
-        20348681,
+        FLOW_COMPLETION_EXPECTED_SIZE,
         "propainter/recurrent_flow_completion.pth",
     ),
 )
@@ -155,30 +169,52 @@ def _path_summary(paths: VisualSetupPaths) -> dict[str, str]:
 
 
 def _status(paths: VisualSetupPaths, runtime: VisualRuntimeConfig) -> dict[str, Any]:
-    source_ok = (
-        paths.source_root.is_dir()
-        and (paths.source_root / "backend" / "inpaint" / "lama_inpaint.py").is_file()
-        and (paths.source_root / "backend" / "inpaint" / "sttn_det_inpaint.py").is_file()
-        and (paths.source_root / "backend" / "inpaint" / "propainter_inpaint.py").is_file()
-    )
     models = {
-        "lama": paths.model_root / "big-lama.pt",
-        "sttn": paths.model_root / "sttn.pth",
-        "propainter": paths.model_root / "propainter" / "ProPainter.pth",
-        "raft": paths.model_root / "propainter" / "raft-things.pth",
-        "flow_completion": paths.model_root / "propainter" / "recurrent_flow_completion.pth",
+        "lama": (paths.model_root / "big-lama.pt", BIG_LAMA_EXPECTED_SIZE, None),
+        "sttn": (
+            paths.model_root / "sttn.pth",
+            _DIRECT_MODELS[0][2],
+            _DIRECT_MODELS[0][1],
+        ),
+        "propainter": (
+            paths.model_root / "propainter" / "ProPainter.pth",
+            PROPAINTER_EXPECTED_SIZE,
+            None,
+        ),
+        "raft": (
+            paths.model_root / "propainter" / "raft-things.pth",
+            _DIRECT_MODELS[1][2],
+            _DIRECT_MODELS[1][1],
+        ),
+        "flow_completion": (
+            paths.model_root / "propainter" / "recurrent_flow_completion.pth",
+            _DIRECT_MODELS[2][2],
+            _DIRECT_MODELS[2][1],
+        ),
     }
+    model_status = {}
+    for name, (path, expected_size, blob_sha) in models.items():
+        actual_size = path.stat().st_size if path.is_file() else None
+        ready = _model_file_ready(
+            path,
+            expected_size=expected_size,
+            blob_sha=blob_sha,
+        )
+        model_status[name] = {
+            "ready": ready,
+            "path": str(path),
+            "expected_size": expected_size,
+            "actual_size": actual_size,
+        }
+
     return {
-        "source_ready": source_ok,
+        "source_ready": _source_ready(paths.source_root),
         "revision": runtime.vsr_revision,
         "packages": {
             name: importlib.util.find_spec(name) is not None
             for name in (*_MINIMAL_PACKAGES.keys(), "torch", "torchvision")
         },
-        "models": {
-            name: {"ready": path.is_file(), "path": str(path)}
-            for name, path in models.items()
-        },
+        "models": model_status,
         "runtime_config_exists": paths.runtime_config.is_file(),
     }
 
@@ -258,15 +294,23 @@ def _package_installer() -> list[str]:
     raise RuntimeError("neither pip nor uv is available for the current Python environment")
 
 
+def _source_ready(root: Path) -> bool:
+    return (
+        root.is_dir()
+        and all((root / relative).is_file() for relative in _VSR_REQUIRED_FILES)
+    )
+
+
 def _install_vsr_source(root: Path, actions: list[str]) -> None:
     git = shutil.which("git")
     if not git:
         raise RuntimeError("git is required to install the VSR source")
     if root.is_dir() and (root / ".git").is_dir():
         current = _capture([git, "-C", str(root), "rev-parse", "HEAD"]).strip()
-        if current == VSR_REVISION:
+        if current == VSR_REVISION and _source_ready(root):
             return
-        _run([git, "-C", str(root), "fetch", "origin", VSR_REVISION, "--depth", "1"])
+        if current != VSR_REVISION:
+            _run([git, "-C", str(root), "fetch", "origin", VSR_REVISION, "--depth", "1"])
     else:
         if root.exists():
             raise RuntimeError(f"visual third-party path exists but is not a git repo: {root}")
@@ -284,21 +328,42 @@ def _install_vsr_source(root: Path, actions: list[str]) -> None:
         "/backend/inpaint/",
         "/backend/tools/inpaint_tools.py",
     ])
-    _run([git, "-C", str(root), "checkout", "--detach", VSR_REVISION])
+    _run([git, "-C", str(root), "checkout", "--detach", "--force", VSR_REVISION])
+    if not _source_ready(root):
+        raise RuntimeError("VSR sparse checkout is incomplete after installation")
     actions.append(f"installed_vsr_source:{VSR_REVISION}")
+
+
+def _model_file_ready(
+    path: Path,
+    *,
+    expected_size: int,
+    blob_sha: str | None = None,
+) -> bool:
+    if not path.is_file() or path.stat().st_size != expected_size:
+        return False
+    return blob_sha is None or _git_blob_sha1(path) == blob_sha
 
 
 def _install_models(root: Path, actions: list[str]) -> None:
     root.mkdir(parents=True, exist_ok=True)
-    if not (root / "big-lama.pt").is_file():
-        _download_joined(_BIG_LAMA_PARTS, root / "big-lama.pt")
+    lama = root / "big-lama.pt"
+    if not _model_file_ready(lama, expected_size=BIG_LAMA_EXPECTED_SIZE):
+        _download_joined(_BIG_LAMA_PARTS, lama)
         actions.append("downloaded_big_lama")
-    if not (root / "propainter" / "ProPainter.pth").is_file():
-        _download_joined(_PROPAINTER_PARTS, root / "propainter" / "ProPainter.pth")
+
+    propainter = root / "propainter" / "ProPainter.pth"
+    if not _model_file_ready(propainter, expected_size=PROPAINTER_EXPECTED_SIZE):
+        _download_joined(_PROPAINTER_PARTS, propainter)
         actions.append("downloaded_propainter")
+
     for remote, blob_sha, size, relative in _DIRECT_MODELS:
         target = root / relative
-        if target.is_file():
+        if _model_file_ready(
+            target,
+            expected_size=size,
+            blob_sha=blob_sha,
+        ):
             continue
         _download_blob(remote, blob_sha, size, target)
         actions.append(f"downloaded_{Path(relative).name}")
@@ -306,8 +371,6 @@ def _install_models(root: Path, actions: list[str]) -> None:
 
 def _download_joined(parts: Iterable[tuple[str, str, int]], target: Path) -> None:
     target.parent.mkdir(parents=True, exist_ok=True)
-    if target.is_file():
-        return
     with tempfile.TemporaryDirectory(prefix="agent-videonote-model-", dir=target.parent) as temp:
         temp_root = Path(temp)
         assembled = temp_root / (target.name + ".assembled")

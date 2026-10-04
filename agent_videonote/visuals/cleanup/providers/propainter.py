@@ -14,13 +14,18 @@ from agent_videonote.visuals.cleanup.providers.common import (
 )
 from agent_videonote.visuals.cleanup.types import CleanupRequest, CleanupResult
 from agent_videonote.visuals.runtime_config import VisualRuntimeConfig
-
-
-_REQUIRED_WEIGHTS = (
-    "raft-things.pth",
-    "recurrent_flow_completion.pth",
-    "ProPainter.pth",
+from agent_videonote.visuals.setup import (
+    FLOW_COMPLETION_EXPECTED_SIZE,
+    PROPAINTER_EXPECTED_SIZE,
+    RAFT_EXPECTED_SIZE,
 )
+
+
+_REQUIRED_WEIGHTS = {
+    "raft-things.pth": RAFT_EXPECTED_SIZE,
+    "recurrent_flow_completion.pth": FLOW_COMPLETION_EXPECTED_SIZE,
+    "ProPainter.pth": PROPAINTER_EXPECTED_SIZE,
+}
 
 
 class ProPainterCleanupStrategy:
@@ -48,9 +53,22 @@ class ProPainterCleanupStrategy:
         if self.model_dir is None:
             problems.append("ProPainter model directory is not configured")
         else:
-            missing = [name for name in _REQUIRED_WEIGHTS if not (self.model_dir / name).is_file()]
+            missing = [
+                name for name in _REQUIRED_WEIGHTS
+                if not (self.model_dir / name).is_file()
+            ]
             if missing:
                 problems.append("ProPainter weights are missing: " + ", ".join(missing))
+            for name, expected_size in _REQUIRED_WEIGHTS.items():
+                path = self.model_dir / name
+                if not path.is_file():
+                    continue
+                actual_size = path.stat().st_size
+                if actual_size != expected_size:
+                    problems.append(
+                        f"ProPainter weight size mismatch for {name}: "
+                        f"{actual_size} != {expected_size}"
+                    )
         return problems
 
     def capabilities(self) -> dict[str, Any]:
@@ -61,6 +79,7 @@ class ProPainterCleanupStrategy:
             "kind": "video_inpaint",
             "requires_mask": True,
             "requires_gpu": True,
+            "may_use_gpu": True,
             "external_runtime": True,
             "single_python": sys.executable,
             "automatic_text_removal": False,

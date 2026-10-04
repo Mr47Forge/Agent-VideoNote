@@ -1,5 +1,7 @@
 from pathlib import Path
 
+import pytest
+
 from agent_videonote.application.service import ApplicationService
 from agent_videonote.asr.capabilities import AsrCapability
 from agent_videonote.asr.context.repository import CourseContextRepository
@@ -42,6 +44,15 @@ class FakeGpuProvider:
     def close(self) -> None:
         self.is_loaded = False
         self.closes += 1
+
+
+class FailingGpuProvider(FakeGpuProvider):
+    def transcribe(self, request: TranscriptionRequest) -> Transcript:
+        if not self.is_loaded:
+            self.loads += 1
+            self.is_loaded = True
+        self.calls += 1
+        raise RuntimeError("simulated ASR failure")
 
 
 class FakeMedia:
@@ -126,3 +137,38 @@ def test_primary_releases_after_persistence_review_reuses_until_stage_release(tm
     app.review(task_id, start=4, end=6)
     assert review.loads == 2
     assert primary.loads == 1
+
+
+def test_primary_provider_is_released_when_transcription_fails(tmp_path: Path) -> None:
+    paths = RuntimePaths(
+        tmp_path / "data",
+        tmp_path / "data" / "tasks",
+        tmp_path / "data" / "models",
+        tmp_path / "data" / "context",
+        tmp_path / "data" / "backups",
+    )
+    store = JsonTaskStore(paths.tasks)
+    registry = ProviderRegistry()
+    primary = FailingGpuProvider("provider-a")
+    registry.register(primary)
+    app = ApplicationService(
+        config=RuntimeConfig(paths),
+        tasks=TaskService(store),
+        workflow=WorkflowEngine(store),
+        media=FakeMedia(),
+        asr_registry=registry,
+        asr_profile=AsrProfile({"primary": "provider-a", "review": None}),
+        contexts=CourseContextRepository(paths.context / "courses"),
+    )
+    source = tmp_path / "video.mp4"
+    source.write_bytes(b"video")
+    task_id = app.prepare(source)["task"]["task_id"]
+
+    with pytest.raises(RuntimeError, match="simulated ASR failure"):
+        app.transcribe(task_id)
+
+    assert primary.closes == 1
+    assert app.loaded_providers() == []
+    state = app.tasks.get(task_id)
+    assert state.current_stage == "transcript"
+    assert "transcript" not in state.artifacts

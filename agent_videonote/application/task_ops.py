@@ -32,6 +32,7 @@ class TaskOperationsMixin:
             if state.current_stage == WorkflowStage.INPUT.value:
                 state = self.workflow.complete_current(
                     state.task_id,
+                    expected_stage=WorkflowStage.INPUT,
                     evidence={
                         "source": state.source.path,
                         "media_info": str(existing["path"]),
@@ -54,6 +55,7 @@ class TaskOperationsMixin:
         if state.current_stage == WorkflowStage.INPUT.value:
             state = self.workflow.complete_current(
                 state.task_id,
+                expected_stage=WorkflowStage.INPUT,
                 evidence={"source": state.source.path, "media_info": str(media_path)},
             )
 

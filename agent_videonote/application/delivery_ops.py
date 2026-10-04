@@ -6,7 +6,7 @@ from typing import Any
 from agent_videonote.core.errors import InvalidTransitionError
 from agent_videonote.core.types import Artifact
 from agent_videonote.delivery.validator import DeliveryReport, validate_delivery
-from agent_videonote.storage.artifacts import write_json_atomic
+from agent_videonote.storage.artifacts import read_json, write_json_atomic
 from agent_videonote.workflow.stages import WorkflowStage
 
 
@@ -15,7 +15,21 @@ class DeliveryOperationsMixin:
         state = self.tasks.get(task_id)
         if state.current_stage != WorkflowStage.VISUAL.value:
             raise InvalidTransitionError("task is not in visual stage")
-        state = self.workflow.complete_current(task_id, evidence=evidence)
+        discovery = state.artifacts.get("visual_discovery")
+        if discovery is None or not Path(discovery["path"]).is_file():
+            raise InvalidTransitionError(
+                "visual discovery must complete before leaving visual stage"
+            )
+        progress = read_json(Path(discovery["path"]))
+        if not progress.get("complete"):
+            raise InvalidTransitionError(
+                "visual discovery must complete before leaving visual stage"
+            )
+        state = self.workflow.complete_current(
+            task_id,
+            evidence=evidence,
+            expected_stage=WorkflowStage.VISUAL,
+        )
         return self._task_summary(state)
 
     def validate_and_finish_delivery(
@@ -58,6 +72,7 @@ class DeliveryOperationsMixin:
             self.workflow.complete_current(
                 task_id,
                 evidence={"delivery_report": str(report_path)},
+                expected_stage=WorkflowStage.DELIVERY,
             )
             self.workflow.mark_done(task_id, evidence={"validated": True})
         return report

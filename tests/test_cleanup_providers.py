@@ -26,6 +26,10 @@ def test_default_registry_exposes_provider_adapters() -> None:
     assert providers["propainter"]["automatic_text_removal"] is False
     assert providers["vsr-lama"]["single_python"] == sys.executable
     assert providers["propainter"]["single_python"] == sys.executable
+    assert providers["vsr-lama"]["may_use_gpu"] is True
+    assert providers["vsr-sttn"]["may_use_gpu"] is True
+    assert providers["propainter"]["may_use_gpu"] is True
+    assert providers["opencv"]["may_use_gpu"] is False
 
 
 def test_generated_pixel_provider_requires_explicit_selection(tmp_path: Path) -> None:
@@ -101,3 +105,20 @@ def test_temporal_output_preserves_all_pixels_outside_explicit_mask() -> None:
     result = _composite_masked(original, generated, mask)
     assert result[1, 1].tolist() == [255, 255, 255]
     assert int(result.sum()) == 3 * 255
+
+
+def test_vsr_lama_reports_truncated_model_as_unavailable(tmp_path: Path) -> None:
+    root = tmp_path / "vsr"
+    (root / "backend" / "inpaint").mkdir(parents=True)
+    model = tmp_path / "big-lama.pt"
+    model.write_bytes(b"truncated")
+    runtime = VisualRuntimeConfig(
+        vsr_root=str(root),
+        lama_model=str(model),
+    )
+    strategy = VsrLamaCleanupStrategy(runtime)
+
+    capabilities = strategy.capabilities()
+
+    assert capabilities["available"] is False
+    assert "size mismatch" in capabilities["reason"]

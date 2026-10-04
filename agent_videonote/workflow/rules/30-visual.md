@@ -11,6 +11,7 @@ MCP 执行入口：
 
 - 扫描候选：`discover_visuals`。测试阶段直接使用默认 600 秒源视频预算；返回 `complete=false` 时继续调用直到完成，不要每 120 秒人工停一次。
 - 分页读取候选：`get_visual_candidates`
+- 只有 `discover_visuals.complete=true` 后才进入持久化清理/修复；扫描中的候选只允许查看，不提前绑定清理缓存。
 - 日常批量清理：`clean_visual_candidates`，一次处理一页候选并复用已有结果。
 - 单张排错才使用：`clean_visual_candidate`
 - 只有明确 mask 时调用指定本地修复 Provider：`repair_visual_candidate`

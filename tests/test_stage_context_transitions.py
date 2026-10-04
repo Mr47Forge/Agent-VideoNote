@@ -1,12 +1,17 @@
 from pathlib import Path
 
+import pytest
+
 from agent_videonote.adapters.mcp.facade import McpToolFacade
 from agent_videonote.application.service import ApplicationService
 from agent_videonote.asr.context.repository import CourseContextRepository
 from agent_videonote.asr.profiles.models import AsrProfile
 from agent_videonote.asr.providers.registry import ProviderRegistry
 from agent_videonote.core.config import RuntimeConfig, RuntimePaths
+from agent_videonote.core.errors import InvalidTransitionError
+from agent_videonote.core.types import Artifact
 from agent_videonote.media.types import MediaInfo
+from agent_videonote.storage.artifacts import write_json_atomic
 from agent_videonote.storage.json_store import JsonTaskStore
 from agent_videonote.tasks.service import TaskService
 from agent_videonote.workflow.engine import WorkflowEngine
@@ -71,6 +76,17 @@ def test_stage_advancing_tools_return_the_next_context_key(tmp_path: Path) -> No
     assert ingested["task"]["current_stage"] == "visual"
     assert ingested["task"]["context_key"].startswith("visual:")
 
+    app = facade.application
+    manifest = write_json_atomic(
+        app.task_dir(task_id) / "visual" / "discovery" / "progress.json",
+        {"complete": True},
+    )
+    app.tasks.register_artifact(
+        task_id,
+        "visual_discovery",
+        Artifact(kind="visual_discovery", path=str(manifest)),
+    )
+
     visual_done = facade.complete_visual(task_id, {"checked": True})
     assert visual_done["task"]["current_stage"] == "delivery"
     assert visual_done["task"]["context_key"].startswith("delivery:")
@@ -79,3 +95,32 @@ def test_stage_advancing_tools_return_the_next_context_key(tmp_path: Path) -> No
     assert delivered["ok"] is True
     assert delivered["task"]["current_stage"] == "done"
     assert delivered["task"]["context_key"].startswith("done:")
+
+
+def test_visual_stage_cannot_finish_before_discovery_is_complete(tmp_path: Path) -> None:
+    source = tmp_path / "video.mp4"
+    source.write_bytes(b"video")
+    srt = tmp_path / "video.srt"
+    srt.write_text(
+        "1\n00:00:00,000 --> 00:00:01,000\n测试。\n",
+        encoding="utf-8",
+    )
+    facade = _facade(tmp_path)
+    task_id = facade.prepare(str(source))["task"]["task_id"]
+    facade.ingest_srt(task_id, str(srt))
+
+    with pytest.raises(InvalidTransitionError, match="discovery must complete"):
+        facade.complete_visual(task_id, {"checked": True})
+
+    app = facade.application
+    manifest = write_json_atomic(
+        app.task_dir(task_id) / "visual" / "discovery" / "progress.json",
+        {"complete": False},
+    )
+    app.tasks.register_artifact(
+        task_id,
+        "visual_discovery",
+        Artifact(kind="visual_discovery", path=str(manifest)),
+    )
+    with pytest.raises(InvalidTransitionError, match="discovery must complete"):
+        facade.complete_visual(task_id, {"checked": True})

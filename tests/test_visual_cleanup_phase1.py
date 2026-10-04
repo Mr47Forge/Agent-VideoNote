@@ -4,10 +4,12 @@ from pathlib import Path
 import pytest
 
 from agent_videonote.application.service import ApplicationService
+from agent_videonote.asr.capabilities import AsrCapability
 from agent_videonote.asr.context.repository import CourseContextRepository
 from agent_videonote.asr.profiles.models import AsrProfile
 from agent_videonote.asr.providers.registry import ProviderRegistry
 from agent_videonote.core.config import RuntimeConfig, RuntimePaths
+from agent_videonote.core.errors import InvalidTransitionError
 from agent_videonote.core.types import Artifact, SourceIdentity
 from agent_videonote.media.types import MediaInfo
 from agent_videonote.storage.artifacts import read_json, write_json_atomic
@@ -417,6 +419,20 @@ class FakeMaskedRepairStrategy:
         )
 
 
+class FakeTemporalMaskedRepairStrategy(FakeMaskedRepairStrategy):
+    strategy_id = "vsr-sttn"
+
+
+class FakeGpuMaskedRepairStrategy(FakeMaskedRepairStrategy):
+    strategy_id = "fake-gpu"
+
+    def capabilities(self):
+        result = super().capabilities()
+        result["strategy_id"] = self.strategy_id
+        result["may_use_gpu"] = True
+        return result
+
+
 def test_explicit_masked_repair_is_persisted_and_idempotent(tmp_path):
     clean = page()
     frames = {second: clean for second in range(11)}
@@ -497,3 +513,149 @@ def test_batch_cleanup_reduces_agent_round_trips_and_reuses_persisted_results(
     assert second["processed"] == 1
     assert second["reused_count"] == 1
     assert len(sampler.calls) == 1
+
+
+def test_masked_repair_variants_use_distinct_persistent_outputs(tmp_path):
+    clean = page()
+    frames = {second: clean for second in range(11)}
+    app, _ = build_app(tmp_path, frames)
+    task_id, _, _, _ = prepared_task(app, tmp_path, frames)
+    mask_a = tmp_path / "mask-a.png"
+    mask_b = tmp_path / "mask-b.png"
+    mask_a.write_bytes(b"mask-a")
+    mask_b.write_bytes(b"mask-b")
+
+    registry = CleanupRegistry()
+    strategy = FakeMaskedRepairStrategy()
+    registry.register(strategy)
+    app.cleanup_registry = registry
+
+    first = app.repair_visual_candidate(
+        task_id, "vc-0001", provider="fake-mask", mask_path=str(mask_a)
+    )
+    second = app.repair_visual_candidate(
+        task_id, "vc-0001", provider="fake-mask", mask_path=str(mask_b)
+    )
+
+    assert first["request_key"] != second["request_key"]
+    assert first["output_path"] != second["output_path"]
+    assert Path(first["output_path"]).is_file()
+    assert Path(second["output_path"]).is_file()
+    assert len(strategy.calls) == 2
+
+
+def test_temporal_repair_cache_key_includes_window_and_interval(tmp_path):
+    clean = page()
+    frames = {second: clean for second in range(11)}
+    app, _ = build_app(tmp_path, frames)
+    task_id, _, _, _ = prepared_task(app, tmp_path, frames)
+    mask = tmp_path / "mask.png"
+    mask.write_bytes(b"mask")
+
+    registry = CleanupRegistry()
+    strategy = FakeTemporalMaskedRepairStrategy()
+    registry.register(strategy)
+    app.cleanup_registry = registry
+
+    first = app.repair_visual_candidate(
+        task_id,
+        "vc-0001",
+        provider="vsr-sttn",
+        mask_path=str(mask),
+        window_seconds=2.0,
+        interval=1.0,
+    )
+    second = app.repair_visual_candidate(
+        task_id,
+        "vc-0001",
+        provider="vsr-sttn",
+        mask_path=str(mask),
+        window_seconds=3.0,
+        interval=1.0,
+    )
+    repeated = app.repair_visual_candidate(
+        task_id,
+        "vc-0001",
+        provider="vsr-sttn",
+        mask_path=str(mask),
+        window_seconds=3.0,
+        interval=1.0,
+    )
+
+    assert first["request_key"] != second["request_key"]
+    assert first["output_path"] != second["output_path"]
+    assert second == repeated
+    assert len(strategy.calls) == 2
+
+
+def test_cleanup_and_repair_wait_for_discovery_completion(tmp_path, monkeypatch):
+    clean = page()
+    frames = {second: clean for second in range(11)}
+    app, _ = build_app(tmp_path, frames)
+    task_id, _, manifest, _ = prepared_task(app, tmp_path, frames)
+    progress = read_json(manifest)
+    progress["complete"] = False
+    write_json_atomic(manifest, progress)
+    monkeypatch.setattr(
+        "agent_videonote.application.visual_ops.FFmpegFrameSampler",
+        lambda _bin: FakeSampler(frames),
+    )
+
+    with pytest.raises(InvalidTransitionError, match="discovery must complete"):
+        app.clean_visual_candidates(task_id)
+    with pytest.raises(InvalidTransitionError, match="discovery must complete"):
+        app.clean_visual_candidate(task_id, "vc-0001")
+
+    mask = tmp_path / "mask.png"
+    mask.write_bytes(b"mask")
+    registry = CleanupRegistry()
+    registry.register(FakeMaskedRepairStrategy())
+    app.cleanup_registry = registry
+    with pytest.raises(InvalidTransitionError, match="discovery must complete"):
+        app.repair_visual_candidate(
+            task_id,
+            "vc-0001",
+            provider="fake-mask",
+            mask_path=str(mask),
+        )
+
+
+def test_gpu_visual_repair_releases_resident_asr_provider_first(tmp_path):
+    clean = page()
+    frames = {second: clean for second in range(11)}
+    app, _ = build_app(tmp_path, frames)
+    task_id, _, _, _ = prepared_task(app, tmp_path, frames)
+    mask = tmp_path / "mask-gpu.png"
+    mask.write_bytes(b"mask")
+
+    class ResidentGpuProvider:
+        provider_id = "resident-review"
+        capabilities = frozenset({AsrCapability.GPU})
+
+        def __init__(self):
+            self.is_loaded = True
+            self.closes = 0
+
+        def close(self):
+            self.is_loaded = False
+            self.closes += 1
+
+    resident = ResidentGpuProvider()
+    app.asr_registry.register(resident)
+
+    registry = CleanupRegistry()
+    strategy = FakeGpuMaskedRepairStrategy()
+    registry.register(strategy)
+    app.cleanup_registry = registry
+
+    result = app.repair_visual_candidate(
+        task_id,
+        "vc-0001",
+        provider="fake-gpu",
+        mask_path=str(mask),
+    )
+
+    assert result["resolved"] is True
+    assert resident.closes == 1
+    assert app.asr_registry.loaded_providers() == []
+    assert len(strategy.calls) == 1

@@ -402,3 +402,33 @@ def test_testing_defaults_reduce_process_and_agent_round_trips(tmp_path):
 
     assert result["complete"]
     assert len(sampler.starts) == 1
+
+
+def test_empty_sampling_chunk_does_not_advance_checkpoint(tmp_path):
+    frames = [A] * 10
+
+    class EmptySecondChunkSampler(FakeSampler):
+        def sample(self, source, start, duration, interval):
+            if start >= 10.0:
+                self.starts.append(start)
+                return []
+            return super().sample(source, start, duration, interval)
+
+    sampler = EmptySecondChunkSampler(frames)
+    config = DiscoveryConfig(chunk_seconds=10)
+
+    with pytest.raises(RuntimeError, match="returned no frames"):
+        run(
+            tmp_path,
+            frames,
+            config=config,
+            budget=20,
+            sampler=sampler,
+            media=FakeMedia(),
+        )
+
+    manifest = tmp_path / "visual" / "discovery" / "progress.json"
+    progress = read_json(manifest)
+    assert progress["scanned_until"] == 10.0
+    assert progress["complete"] is False
+    assert sampler.starts == [0.0, 10.0]

@@ -122,6 +122,15 @@ def test_delivery_recovers_done_stage_not_yet_marked_complete(tmp_path: Path) ->
     app = _app(tmp_path)
     task_id = app.prepare(source)["task"]["task_id"]
     app.ingest_srt(task_id, srt)
+    manifest = write_json_atomic(
+        app.task_dir(task_id) / "visual" / "discovery" / "progress.json",
+        {"complete": True},
+    )
+    app.tasks.register_artifact(
+        task_id,
+        "visual_discovery",
+        Artifact(kind="visual_discovery", path=str(manifest)),
+    )
     app.complete_visual(task_id, {"checked": True})
 
     # Simulate a crash after DELIVERY -> DONE but before mark_done().
