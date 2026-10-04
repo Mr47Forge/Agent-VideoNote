@@ -223,7 +223,8 @@ def prepared_task(app, tmp_path, frames):
     write_json_atomic(manifest, {
         "source_path": str(source.resolve()),
         "source_fingerprint": SourceIdentity.from_path(source).fingerprint,
-        "duration": 11, "candidates": [item], "complete": True,
+        "duration": 11, "scanned_until": 11.0,
+        "candidates": [item], "complete": True,
     })
     app.tasks.register_artifact(task_id, "visual_discovery",
                                 Artifact(kind="visual_discovery", path=str(manifest)))
