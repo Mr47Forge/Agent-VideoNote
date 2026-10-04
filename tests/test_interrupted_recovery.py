@@ -1,10 +1,13 @@
 from pathlib import Path
 
+import pytest
+
 from agent_videonote.application.service import ApplicationService
 from agent_videonote.asr.context.repository import CourseContextRepository
 from agent_videonote.asr.profiles.models import AsrProfile
 from agent_videonote.asr.providers.registry import ProviderRegistry
 from agent_videonote.core.config import RuntimeConfig, RuntimePaths
+from agent_videonote.core.errors import CapabilityError
 from agent_videonote.core.types import Artifact
 from agent_videonote.media.types import MediaInfo
 from agent_videonote.storage.artifacts import write_json_atomic
@@ -189,3 +192,28 @@ def test_transcribe_adopts_orphan_transcript_without_provider_rerun(tmp_path: Pa
     assert recovered.current_stage == "visual"
     assert recovered.artifacts["transcript"]["path"] == str(orphan)
 
+
+
+def test_invalid_orphan_transcript_is_not_adopted_or_advanced(tmp_path: Path) -> None:
+    source = tmp_path / "video.mp4"
+    source.write_bytes(b"video")
+    app = _app(tmp_path)
+    task_id = app.prepare(source)["task"]["task_id"]
+
+    orphan = write_json_atomic(
+        app.task_dir(task_id) / "transcript" / "transcript.json",
+        {
+            "text": "坏的恢复文件",
+            "segments": [],
+            "source_id": "test:broken",
+            "language": "zh",
+        },
+    )
+
+    with pytest.raises(CapabilityError, match="invalid recovered transcript"):
+        app.transcribe(task_id)
+
+    state = app.tasks.get(task_id)
+    assert state.current_stage == "transcript"
+    assert "transcript" not in state.artifacts
+    assert orphan.is_file()

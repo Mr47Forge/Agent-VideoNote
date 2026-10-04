@@ -98,11 +98,27 @@ class FFmpegFrameSampler:
             raise RuntimeError(f"visual sampling failed: {exc.stderr.decode('utf-8', 'replace')[-600:]}") from exc
         if len(result.stdout) % FRAME_BYTES:
             raise RuntimeError("visual sampling returned an incomplete frame")
-        # The fps filter selects the frame nearest the center of each sample bin.
-        # Labeling it with the bin start can extract the preceding page at a cut.
-        return [FrameSample(round(min(start + duration, start + (i + 0.5) * interval), 3),
-                            result.stdout[i * FRAME_BYTES:(i + 1) * FRAME_BYTES])
-                for i in range(min(count, len(result.stdout) // FRAME_BYTES))]
+        actual = len(result.stdout) // FRAME_BYTES
+        if actual != count:
+            raise RuntimeError(
+                f"visual sampling returned {actual} frames; expected {count} "
+                f"for {duration:.3f}s at {interval:.3f}s interval"
+            )
+        # Label each frame at the center of its sampling bin. The last bin can
+        # be shorter than interval, so its center must remain strictly before
+        # the requested end instead of being labeled at video duration.
+        samples: list[FrameSample] = []
+        for i in range(count):
+            bin_start = i * interval
+            bin_end = min(duration, (i + 1) * interval)
+            second = start + (bin_start + bin_end) / 2
+            samples.append(
+                FrameSample(
+                    round(second, 3),
+                    result.stdout[i * FRAME_BYTES:(i + 1) * FRAME_BYTES],
+                )
+            )
+        return samples
 
 
 def _quality(pixels: bytes) -> tuple[float, float, float]:
@@ -165,6 +181,7 @@ class SceneContentDiscovery:
             if progress.get("config") != current_config:
                 raise ValueError("visual discovery source or configuration changed; existing progress was preserved")
             if progress.get("complete"):
+                self._prune_superseded(image_dir, progress)
                 return self.summary(progress, manifest_path)
         else:
             progress = {
@@ -188,9 +205,13 @@ class SceneContentDiscovery:
                 end - start,
                 self.config.sampling_interval,
             )
-            if not samples:
+            expected_samples = math.ceil(
+                (end - start) / self.config.sampling_interval
+            )
+            if len(samples) != expected_samples:
                 raise RuntimeError(
-                    f"visual sampling returned no frames for {start:.3f}-{end:.3f}; "
+                    f"visual sampling returned {len(samples)} frames for "
+                    f"{start:.3f}-{end:.3f}; expected {expected_samples}; "
                     "checkpoint was not advanced"
                 )
             for sample in samples:

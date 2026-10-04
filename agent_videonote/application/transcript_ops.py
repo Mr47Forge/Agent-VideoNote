@@ -14,7 +14,7 @@ from agent_videonote.core.errors import CapabilityError, ConfigurationError, Inv
 from agent_videonote.core.types import Artifact, TimeRange
 from agent_videonote.storage.artifacts import read_json, write_json_atomic
 from agent_videonote.transcripts.srt import load_srt
-from agent_videonote.transcripts.types import Transcript
+from agent_videonote.transcripts.types import Transcript, TranscriptSegment
 from agent_videonote.transcripts.validation import validate_transcript
 from agent_videonote.workflow.stages import WorkflowStage
 
@@ -72,6 +72,7 @@ class TranscriptOperationsMixin:
         existing = state.artifacts.get("transcript")
         orphan_transcript = self.task_dir(task_id) / "transcript" / "transcript.json"
         if not existing and orphan_transcript.is_file():
+            _validate_recovered_transcript(orphan_transcript)
             summary = self._transcript_summary(task_id, orphan_transcript)
             state = self.tasks.register_artifact(
                 task_id,
@@ -142,6 +143,7 @@ class TranscriptOperationsMixin:
         existing = state.artifacts.get("transcript")
         orphan_transcript = self.task_dir(task_id) / "transcript" / "transcript.json"
         if not existing and orphan_transcript.is_file():
+            _validate_recovered_transcript(orphan_transcript)
             summary = self._transcript_summary(task_id, orphan_transcript)
             state = self.tasks.register_artifact(
                 task_id,
@@ -505,3 +507,43 @@ def _review_cache_token(
     prefix = f"{start:.3f}-{end:.3f}-x{speed:.2f}".replace(".", "_")
     return f"{prefix}-{digest}"
 
+
+
+def _validate_recovered_transcript(path: Path) -> None:
+    """Reject a semantically incomplete orphan before adopting it into task state."""
+    payload = read_json(path)
+    if not isinstance(payload, dict):
+        raise CapabilityError("recovered transcript payload must be an object")
+    source_id = payload.get("source_id")
+    if not isinstance(source_id, str) or not source_id.strip():
+        raise CapabilityError("recovered transcript is missing source_id")
+    raw_segments = payload.get("segments")
+    if not isinstance(raw_segments, list):
+        raise CapabilityError("recovered transcript segments must be a list")
+    try:
+        segments = tuple(
+            TranscriptSegment(
+                start=float(item["start"]),
+                end=float(item["end"]),
+                text=str(item["text"]),
+            )
+            for item in raw_segments
+        )
+    except (KeyError, TypeError, ValueError) as exc:
+        raise CapabilityError("recovered transcript has invalid segment fields") from exc
+
+    recovered = Transcript(
+        text=str(payload.get("text") or ""),
+        segments=segments,
+        source_id=source_id,
+        language=(
+            str(payload["language"])
+            if payload.get("language") is not None
+            else None
+        ),
+    )
+    problems = validate_transcript(recovered)
+    if problems:
+        raise CapabilityError(
+            "invalid recovered transcript: " + "; ".join(problems)
+        )

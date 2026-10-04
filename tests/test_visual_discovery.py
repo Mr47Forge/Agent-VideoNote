@@ -16,7 +16,8 @@ from agent_videonote.workflow.engine import WorkflowEngine
 from agent_videonote.storage.artifacts import read_json
 from agent_videonote.visuals.discovery.scene import (
     DISCOVERY_ALGORITHM_VERSION, PROGRESS_SCHEMA_VERSION,
-    DiscoveryConfig, FrameSample, SceneContentDiscovery, read_candidates,
+    DiscoveryConfig, FFmpegFrameSampler, FrameSample, SceneContentDiscovery,
+    read_candidates,
 )
 
 
@@ -432,3 +433,92 @@ def test_empty_sampling_chunk_does_not_advance_checkpoint(tmp_path):
     assert progress["scanned_until"] == 10.0
     assert progress["complete"] is False
     assert sampler.starts == [0.0, 10.0]
+
+
+def test_partial_sampling_chunk_does_not_advance_checkpoint(tmp_path):
+    frames = [A] * 10
+
+    class ShortSecondChunkSampler(FakeSampler):
+        def sample(self, source, start, duration, interval):
+            result = super().sample(source, start, duration, interval)
+            if start >= 10.0:
+                return result[:-1]
+            return result
+
+    sampler = ShortSecondChunkSampler(frames)
+    config = DiscoveryConfig(chunk_seconds=10)
+
+    with pytest.raises(RuntimeError, match="expected 5"):
+        run(
+            tmp_path,
+            frames,
+            config=config,
+            budget=20,
+            sampler=sampler,
+            media=FakeMedia(),
+        )
+
+    progress = read_json(tmp_path / "visual" / "discovery" / "progress.json")
+    assert progress["scanned_until"] == 10.0
+    assert progress["complete"] is False
+
+
+def test_ffmpeg_sampler_labels_short_final_bin_before_requested_end(monkeypatch):
+    class Result:
+        stdout = A * 6
+        stderr = b""
+
+    monkeypatch.setattr(
+        "agent_videonote.visuals.discovery.scene.subprocess.run",
+        lambda *args, **kwargs: Result(),
+    )
+
+    samples = FFmpegFrameSampler("ffmpeg").sample(
+        Path("video.mp4"),
+        start=0.0,
+        duration=11.0,
+        interval=2.0,
+    )
+
+    assert [item.second for item in samples] == [1.0, 3.0, 5.0, 7.0, 9.0, 10.5]
+    assert samples[-1].second < 11.0
+
+
+def test_ffmpeg_sampler_rejects_short_successful_output(monkeypatch):
+    class Result:
+        stdout = A * 5
+        stderr = b""
+
+    monkeypatch.setattr(
+        "agent_videonote.visuals.discovery.scene.subprocess.run",
+        lambda *args, **kwargs: Result(),
+    )
+
+    with pytest.raises(RuntimeError, match="returned 5 frames; expected 6"):
+        FFmpegFrameSampler("ffmpeg").sample(
+            Path("video.mp4"),
+            start=0.0,
+            duration=11.0,
+            interval=2.0,
+        )
+
+
+def test_completed_discovery_prunes_orphan_candidate_images_on_reentry(tmp_path):
+    frames = [A, A, A, B, B, B]
+    first, sampler, media = run(tmp_path, frames, budget=120)
+    assert first["complete"]
+
+    orphan = tmp_path / "visual" / "candidates" / "vc-9999-99.000.jpg"
+    orphan.write_bytes(b"orphan")
+    assert orphan.is_file()
+
+    second, _, _ = run(
+        tmp_path,
+        frames,
+        budget=120,
+        sampler=sampler,
+        media=media,
+    )
+
+    assert second["complete"]
+    assert not orphan.exists()
