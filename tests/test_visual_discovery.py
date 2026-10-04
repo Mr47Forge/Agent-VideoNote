@@ -418,7 +418,7 @@ def test_empty_sampling_chunk_does_not_advance_checkpoint(tmp_path):
     sampler = EmptySecondChunkSampler(frames)
     config = DiscoveryConfig(chunk_seconds=10)
 
-    with pytest.raises(RuntimeError, match="returned no frames"):
+    with pytest.raises(RuntimeError, match="expected 5"):
         run(
             tmp_path,
             frames,

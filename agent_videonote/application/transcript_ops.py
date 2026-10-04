@@ -14,7 +14,11 @@ from agent_videonote.core.errors import CapabilityError, ConfigurationError, Inv
 from agent_videonote.core.types import Artifact, TimeRange
 from agent_videonote.storage.artifacts import read_json, write_json_atomic
 from agent_videonote.transcripts.srt import load_srt
-from agent_videonote.transcripts.types import Transcript, TranscriptSegment
+from agent_videonote.transcripts.types import (
+    Transcript,
+    TranscriptSegment,
+    TranscriptWord,
+)
 from agent_videonote.transcripts.validation import validate_transcript
 from agent_videonote.workflow.stages import WorkflowStage
 
@@ -72,7 +76,7 @@ class TranscriptOperationsMixin:
         existing = state.artifacts.get("transcript")
         orphan_transcript = self.task_dir(task_id) / "transcript" / "transcript.json"
         if not existing and orphan_transcript.is_file():
-            _validate_recovered_transcript(orphan_transcript)
+            _validate_persisted_transcript(orphan_transcript)
             summary = self._transcript_summary(task_id, orphan_transcript)
             state = self.tasks.register_artifact(
                 task_id,
@@ -143,7 +147,7 @@ class TranscriptOperationsMixin:
         existing = state.artifacts.get("transcript")
         orphan_transcript = self.task_dir(task_id) / "transcript" / "transcript.json"
         if not existing and orphan_transcript.is_file():
-            _validate_recovered_transcript(orphan_transcript)
+            _validate_persisted_transcript(orphan_transcript)
             summary = self._transcript_summary(task_id, orphan_transcript)
             state = self.tasks.register_artifact(
                 task_id,
@@ -320,10 +324,18 @@ class TranscriptOperationsMixin:
         if provider_id is None:
             raise ConfigurationError("review ASR role is disabled")
 
+        if not 0.5 <= speed <= 2.0:
+            raise ValueError("review speed must be between 0.5 and 2.0")
         window = TimeRange(start=start, end=end)
         if window.duration > _MAX_REVIEW_SECONDS:
             raise ValueError(
                 f"review window cannot exceed {_MAX_REVIEW_SECONDS:.0f} seconds"
+            )
+        media_duration = _task_media_duration(self, state)
+        if media_duration is not None and end > media_duration + 0.001:
+            raise ValueError(
+                f"review window ends after source duration: "
+                f"{end:.3f} > {media_duration:.3f}"
             )
 
         ctx = self._resolve_context(context=context, course_id=course_id)
@@ -335,10 +347,12 @@ class TranscriptOperationsMixin:
             end=end,
             speed=speed,
             provider_id=provider_id,
+            course_id=course_id,
             context=ctx,
         )
         review_path = self.task_dir(task_id) / "reviews" / "results" / f"{token}.json"
         if review_path.is_file():
+            _validate_persisted_transcript(review_path)
             result = read_json(review_path)
             artifact_name = f"review:{token}"
             if artifact_name not in state.artifacts:
@@ -383,6 +397,16 @@ class TranscriptOperationsMixin:
                         source_range=window,
                     )
                 )
+                transcript = _restore_review_timeline(
+                    transcript,
+                    window=window,
+                    speed=speed,
+                )
+                problems = validate_transcript(transcript)
+                if problems:
+                    raise CapabilityError(
+                        "invalid review transcript: " + "; ".join(problems)
+                    )
             except Exception:
                 self.asr_registry.release_provider(provider_id)
                 raise
@@ -490,11 +514,16 @@ def _review_cache_token(
     end: float,
     speed: float,
     provider_id: str,
+    course_id: str | None,
     context: RecognitionContext,
 ) -> str:
     payload = json.dumps(
         {
+            "start": start,
+            "end": end,
+            "speed": speed,
             "provider_id": provider_id,
+            "course_id": course_id,
             "language": context.language,
             "hotwords": list(context.hotwords),
             "free_text": context.free_text,
@@ -509,8 +538,8 @@ def _review_cache_token(
 
 
 
-def _validate_recovered_transcript(path: Path) -> None:
-    """Reject a semantically incomplete orphan before adopting it into task state."""
+def _validate_persisted_transcript(path: Path) -> None:
+    """Reject a semantically incomplete persisted transcript before reuse."""
     payload = read_json(path)
     if not isinstance(payload, dict):
         raise CapabilityError("recovered transcript payload must be an object")
@@ -547,3 +576,72 @@ def _validate_recovered_transcript(path: Path) -> None:
         raise CapabilityError(
             "invalid recovered transcript: " + "; ".join(problems)
         )
+
+
+def _task_media_duration(service: Any, state: Any) -> float | None:
+    artifact = state.artifacts.get("media_info")
+    if artifact and Path(artifact["path"]).is_file():
+        payload = read_json(artifact["path"])
+        value = payload.get("duration")
+        if value is not None:
+            try:
+                duration = float(value)
+            except (TypeError, ValueError):
+                duration = None
+            if duration is not None and duration > 0:
+                return duration
+
+    info = service.media.probe(state.source.path)
+    return float(info.duration) if info.duration is not None else None
+
+
+def _restore_review_timeline(
+    transcript: Transcript,
+    *,
+    window: TimeRange,
+    speed: float,
+) -> Transcript:
+    """Map timestamps from speed-adjusted review audio back to source-video time."""
+    if abs(speed - 1.0) < 1e-9 or not transcript.segments:
+        return transcript
+
+    # Providers without detailed timestamps deliberately use the original
+    # source_range as one fallback segment; that range is already correct.
+    if (
+        len(transcript.segments) == 1
+        and not transcript.segments[0].words
+        and abs(transcript.segments[0].start - window.start) <= 0.001
+        and abs(transcript.segments[0].end - window.end) <= 0.001
+    ):
+        return transcript
+
+    def scale(second: float) -> float:
+        mapped = window.start + (float(second) - window.start) * speed
+        return min(window.end, max(window.start, mapped))
+
+    segments: list[TranscriptSegment] = []
+    for segment in transcript.segments:
+        words = tuple(
+            TranscriptWord(
+                start=scale(word.start),
+                end=scale(word.end),
+                text=word.text,
+            )
+            for word in segment.words
+        )
+        segments.append(
+            TranscriptSegment(
+                start=scale(segment.start),
+                end=scale(segment.end),
+                text=segment.text,
+                words=words,
+            )
+        )
+
+    return Transcript(
+        text=transcript.text,
+        segments=tuple(segments),
+        source_id=transcript.source_id,
+        language=transcript.language,
+        metadata=dict(transcript.metadata),
+    )
