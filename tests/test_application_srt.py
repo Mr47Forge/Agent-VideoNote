@@ -67,6 +67,8 @@ def test_srt_ingest_returns_summary_and_transcript_is_sliced(tmp_path: Path) -> 
     assert "text" not in summary
     assert summary["segments"] == 2
     assert summary["read_with"] == "get_transcript"
+    assert summary["reused"] is False
+    assert summary["elapsed_seconds"] >= 0
     assert summary["task"]["current_stage"] == "visual"
     assert summary["task"]["context_key"].startswith("visual:")
     assert summary["task"]["context_tool"] == "task_context"

@@ -9,9 +9,10 @@
 
 MCP 执行入口：
 
-- 扫描候选：`discover_visuals`
+- 扫描候选：`discover_visuals`。测试阶段直接使用默认 600 秒源视频预算；返回 `complete=false` 时继续调用直到完成，不要每 120 秒人工停一次。
 - 分页读取候选：`get_visual_candidates`
-- 优先尝试真实干净源帧：`clean_visual_candidate`
+- 日常批量清理：`clean_visual_candidates`，一次处理一页候选并复用已有结果。
+- 单张排错才使用：`clean_visual_candidate`
 - 只有明确 mask 时调用指定本地修复 Provider：`repair_visual_candidate`
 - 本阶段工作确实完成后：`complete_visual`
 
@@ -20,6 +21,7 @@ MCP 执行入口：
 - 不把装饰画面当成必交付图片。
 - 不要求每一个视频使用同一种视觉模式。
 - 不为了“绝对干净”无限抽帧或无限修图。
+- 不对每个候选重复做 Agent 决策；确定性的 source-frame 检查交给批量工具。
 - 普通任务不得现场制造新的去广告脚本。
 - GPT 图像 AI / 付费生成式修图不属于本工作流。
 - 无法安全处理的视觉问题应持久记录，留给维护阶段统一解决。

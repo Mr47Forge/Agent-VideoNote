@@ -391,3 +391,14 @@ def test_application_discovery_preserves_transcript_and_task_stage(tmp_path, mon
     assert tasks.get(task_id).completed_stages == ["input", "transcript"]
     assert transcript_path.read_bytes() == b'{"text":"keep"}'
     assert tasks.get(task_id).artifacts["visual_discovery"]["path"] == result["artifact_path"]
+
+
+def test_testing_defaults_reduce_process_and_agent_round_trips(tmp_path):
+    config = DiscoveryConfig()
+    assert config.chunk_seconds == 300.0
+
+    frames = [A, A, A, B, B, B]
+    result, sampler, _ = run(tmp_path, frames, config=config, budget=700)
+
+    assert result["complete"]
+    assert len(sampler.starts) == 1

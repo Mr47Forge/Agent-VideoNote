@@ -24,9 +24,9 @@ def create_server():
         return facade.health()
 
     @mcp.tool()
-    def discover_visuals(task_id: str, budget_seconds: float = 120.0,
+    def discover_visuals(task_id: str, budget_seconds: float = 600.0,
                          config: dict[str, Any] | None = None) -> dict[str, Any]:
-        """有界扫描真实视频画面，持久化视觉候选与断点进度；返回紧凑摘要。"""
+        """增量扫描真实视频画面；测试阶段默认一次推进 600 秒源视频并复用断点。"""
         return facade.discover_visuals(task_id, budget_seconds, config)
 
     @mcp.tool()
@@ -36,8 +36,17 @@ def create_server():
         return facade.get_visual_candidates(task_id, start, limit)
 
     @mcp.tool()
+    def clean_visual_candidates(
+        task_id: str,
+        start: int = 0,
+        limit: int = 20,
+    ) -> dict[str, Any]:
+        """批量处理一页视觉候选，优先真实源帧；返回紧凑统计而不是逐张大结果。"""
+        return facade.clean_visual_candidates(task_id, start=start, limit=limit)
+
+    @mcp.tool()
     def clean_visual_candidate(task_id: str, candidate_id: str) -> dict[str, Any]:
-        """寻找同状态的干净真实源帧；仅返回持久化结果摘要。"""
+        """单张调试入口：寻找同状态的干净真实源帧；日常测试优先用批量工具。"""
         return facade.clean_visual_candidate(task_id, candidate_id)
 
     @mcp.tool()

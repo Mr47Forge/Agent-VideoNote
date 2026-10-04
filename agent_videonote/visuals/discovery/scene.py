@@ -29,7 +29,7 @@ class DiscoveryConfig:
     min_candidate_gap: float = 6.0
     max_candidates: int = 120
     max_candidates_per_hour: int = 100
-    chunk_seconds: float = 60.0
+    chunk_seconds: float = 300.0
     min_brightness: float = 0.04
     min_detail: float = 0.015
     min_active_fraction: float = 0.08
@@ -58,8 +58,8 @@ class DiscoveryConfig:
             raise ValueError("max_candidates must be between 1 and 500")
         if not 1 <= self.max_candidates_per_hour <= 120:
             raise ValueError("max_candidates_per_hour must be between 1 and 120")
-        if not 10 <= self.chunk_seconds <= 120:
-            raise ValueError("chunk_seconds must be between 10 and 120 seconds")
+        if not 10 <= self.chunk_seconds <= 600:
+            raise ValueError("chunk_seconds must be between 10 and 600 seconds")
         if not 4 <= self.max_pending_seconds <= 20:
             raise ValueError("max_pending_seconds must be between 4 and 20 seconds")
         if not 10 <= self.min_persistent_gap <= 120:
@@ -127,9 +127,9 @@ class SceneContentDiscovery:
         self.config = config or DiscoveryConfig()
 
     def scan(self, *, source: Path, fingerprint: str, duration: float,
-             visual_dir: Path, budget_seconds: float = 120.0) -> dict:
-        if not 2 <= budget_seconds <= 600:
-            raise ValueError("budget_seconds must be between 2 and 600")
+             visual_dir: Path, budget_seconds: float = 600.0) -> dict:
+        if not 2 <= budget_seconds <= 3600:
+            raise ValueError("budget_seconds must be between 2 and 3600")
         if duration <= 0 or not math.isfinite(duration):
             raise ValueError("positive finite video duration is required")
         manifest_path = visual_dir / "discovery" / "progress.json"

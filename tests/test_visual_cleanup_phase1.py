@@ -108,7 +108,7 @@ def test_transient_overlay_is_replaced_with_real_clean_frame(tmp_path):
     assert result.strategy_id == "source-frame-replacement"
     assert result.detail["replacement_timestamp"] in (0, 1, 2, 3, 4, 6, 7, 8, 9, 10)
     assert Path(result.output_path).read_bytes() == clean
-    assert len(sampler.calls) == 2
+    assert len(sampler.calls) == 1
     assert sum(sampler.counts) <= 16
     assert not list((tmp_path / "temp").glob("*.jpg"))
     assert len(media.extracted) == 1
@@ -267,7 +267,7 @@ def test_clean_is_persistent_and_never_added_to_unresolved(tmp_path, monkeypatch
     second = app.clean_visual_candidate(task_id, "vc-0001")
     assert first == second
     assert first["status"] == "clean"
-    assert len(sampler.calls) == 2
+    assert len(sampler.calls) == 1
     assert not [x for x in app.tasks.get(task_id).unresolved
                 if x["category"] == "visual_cleanup"]
 
@@ -286,7 +286,7 @@ def test_evidenced_unresolved_is_persistent_and_not_duplicated(tmp_path, monkeyp
     assert first == second
     assert first["status"] == "unresolved"
     assert first["unresolved_reason"] == "replacement_strategy_rejected"
-    assert len(sampler.calls) == 2
+    assert len(sampler.calls) == 1
     assert len([x for x in app.tasks.get(task_id).unresolved
                 if x["category"] == "visual_cleanup"]) == 1
 
@@ -321,7 +321,7 @@ def test_legacy_unresolved_is_reassessed_and_only_matching_issue_removed(tmp_pat
         ("asr_review", "vc-0001"), ("visual_cleanup", "vc-9999")}
     restarted, _ = build_app(tmp_path, frames)
     assert restarted.clean_visual_candidate(task_id, "vc-0001") == first
-    assert len(sampler.calls) == 2
+    assert len(sampler.calls) == 1
 
 
 def test_legacy_resolved_result_is_reused_without_rescanning(tmp_path, monkeypatch):
@@ -467,3 +467,32 @@ def test_explicit_masked_repair_rejects_unknown_provider(tmp_path):
             provider="unknown-provider",
             mask_path=str(mask),
         )
+
+
+def test_batch_cleanup_reduces_agent_round_trips_and_reuses_persisted_results(
+        tmp_path, monkeypatch):
+    clean = page()
+    frames = {second: overlay(clean) if second == 5 else clean for second in range(11)}
+    app, _ = build_app(tmp_path, frames)
+    task_id, _, _, _ = prepared_task(app, tmp_path, frames)
+    sampler = FakeSampler(frames)
+    monkeypatch.setattr(
+        "agent_videonote.application.visual_ops.FFmpegFrameSampler",
+        lambda _bin: sampler,
+    )
+
+    first = app.clean_visual_candidates(task_id, start=0, limit=20)
+
+    assert first["processed"] == 1
+    assert first["has_more"] is False
+    assert first["counts"] == {"clean": 0, "resolved": 1, "unresolved": 0}
+    assert first["reused_count"] == 0
+    assert len(first["resolved"]) == 1
+    assert first["unresolved"] == []
+    assert len(sampler.calls) == 1
+
+    second = app.clean_visual_candidates(task_id, start=0, limit=20)
+
+    assert second["processed"] == 1
+    assert second["reused_count"] == 1
+    assert len(sampler.calls) == 1

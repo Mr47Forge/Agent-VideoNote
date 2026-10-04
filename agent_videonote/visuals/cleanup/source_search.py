@@ -163,14 +163,28 @@ class SourceFrameCleanup:
         start = max(0.0, timestamp - self.config.radius_seconds - interval / 2)
         end = min(duration, timestamp + self.config.radius_seconds + interval / 2)
         nearby = self.sampler.sample(source, start, end - start, interval)
-        exact_start = max(0.0, timestamp - interval / 2)
-        exact = self.sampler.sample(source, exact_start,
-                                    min(interval, duration - exact_start), interval)
-        if len(nearby) + len(exact) > self.config.max_samples:
+        current_sample = min(
+            nearby,
+            key=lambda frame: abs(frame.second - timestamp),
+            default=None,
+        )
+        extra_samples = 0
+        if (current_sample is None
+                or abs(current_sample.second - timestamp) > interval * 0.55):
+            exact_start = max(0.0, timestamp - interval / 2)
+            exact = self.sampler.sample(
+                source,
+                exact_start,
+                min(interval, duration - exact_start),
+                interval,
+            )
+            extra_samples = len(exact)
+            if not exact:
+                raise ValueError("candidate source frame is unavailable")
+            current_sample = exact[0]
+        if len(nearby) + extra_samples > self.config.max_samples:
             raise ValueError("nearby frame count exceeds max_samples")
-        if not exact:
-            raise ValueError("candidate source frame is unavailable")
-        current = FrameSample(timestamp, exact[0].pixels)
+        current = FrameSample(timestamp, current_sample.pixels)
         stored_preview = decode(candidate.get("fingerprint", {}).get("preview"))
         if stored_preview is None or difference(preview(current.pixels), stored_preview) > 0.06:
             raise ValueError("candidate frame does not match its discovery preview")
@@ -181,7 +195,7 @@ class SourceFrameCleanup:
                 strategy_id="source-frame-replacement",
                 detail={"evidence": {"assessment": "no_cleanup_required_by_current_evidence",
                                      "search_reason": reason,
-                                     "sample_count": len(nearby) + len(exact)}},
+                                     "sample_count": len(nearby) + extra_samples}},
             )
 
         temp_dir.mkdir(parents=True, exist_ok=True)
@@ -200,7 +214,7 @@ class SourceFrameCleanup:
                     strategy_id="source-frame-replacement",
                     detail={"unresolved_reason": "replacement_strategy_rejected",
                             "evidence": {**selection.evidence,
-                                         "sample_count": len(nearby) + len(exact)}},
+                                         "sample_count": len(nearby) + extra_samples}},
                 )
             return CleanupResult(
                 status="resolved", output_path=result.output_path,
@@ -208,7 +222,7 @@ class SourceFrameCleanup:
                 detail={"replacement_timestamp": selection.timestamp,
                         "confidence": selection.confidence,
                         "evidence": {**selection.evidence,
-                                     "sample_count": len(nearby) + len(exact)}},
+                                     "sample_count": len(nearby) + extra_samples}},
             )
         finally:
             temp_frame.unlink(missing_ok=True)

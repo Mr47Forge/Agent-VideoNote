@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import time
 from pathlib import Path
 from typing import Any
 
@@ -65,6 +66,7 @@ class TranscriptOperationsMixin:
         *,
         language: str | None = None,
     ) -> dict[str, Any]:
+        started = time.perf_counter()
         state = self.tasks.get(task_id)
         existing = state.artifacts.get("transcript")
         orphan_transcript = self.task_dir(task_id) / "transcript" / "transcript.json"
@@ -93,6 +95,8 @@ class TranscriptOperationsMixin:
                     },
                 )
             summary["task"] = self._task_summary(self.tasks.get(task_id))
+            summary["reused"] = True
+            summary["elapsed_seconds"] = round(time.perf_counter() - started, 3)
             return summary
 
         if state.current_stage != WorkflowStage.TRANSCRIPT.value:
@@ -119,6 +123,8 @@ class TranscriptOperationsMixin:
         )
         summary = self._transcript_summary(task_id, path)
         summary["task"] = self._task_summary(self.tasks.get(task_id))
+        summary["reused"] = False
+        summary["elapsed_seconds"] = round(time.perf_counter() - started, 3)
         return summary
 
     def transcribe(
@@ -128,6 +134,7 @@ class TranscriptOperationsMixin:
         context: RecognitionContext | None = None,
         course_id: str | None = None,
     ) -> dict[str, Any]:
+        started = time.perf_counter()
         state = self.tasks.get(task_id)
         existing = state.artifacts.get("transcript")
         orphan_transcript = self.task_dir(task_id) / "transcript" / "transcript.json"
@@ -156,6 +163,8 @@ class TranscriptOperationsMixin:
                     },
                 )
             summary["task"] = self._task_summary(self.tasks.get(task_id))
+            summary["reused"] = True
+            summary["elapsed_seconds"] = round(time.perf_counter() - started, 3)
             return summary
 
         if state.current_stage != WorkflowStage.TRANSCRIPT.value:
@@ -205,7 +214,9 @@ class TranscriptOperationsMixin:
         )
         summary = self._transcript_summary(task_id, path)
         summary["task"] = self._task_summary(self.tasks.get(task_id))
+        summary["reused"] = False
         self.asr_registry.release_provider(provider_id)
+        summary["elapsed_seconds"] = round(time.perf_counter() - started, 3)
         return summary
 
     def get_transcript(

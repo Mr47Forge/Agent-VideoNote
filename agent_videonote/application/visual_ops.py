@@ -4,6 +4,7 @@ import hashlib
 import math
 import re
 import shutil
+import time
 from pathlib import Path
 from typing import Any
 
@@ -22,7 +23,7 @@ from agent_videonote.workflow.stages import WorkflowStage
 
 
 class VisualOperationsMixin:
-    def discover_visuals(self, task_id: str, *, budget_seconds: float = 120.0,
+    def discover_visuals(self, task_id: str, *, budget_seconds: float = 600.0,
                          config: dict[str, Any] | None = None) -> dict[str, Any]:
         state = self.tasks.get(task_id)
         if (state.current_stage != WorkflowStage.VISUAL.value
@@ -37,24 +38,81 @@ class VisualOperationsMixin:
         if info.duration is None:
             raise ValueError("video duration is unavailable")
         manifest_path = self.task_dir(task_id) / "visual" / "discovery" / "progress.json"
+        reused = bool(manifest_path.is_file() and read_json(manifest_path).get("complete"))
         if config is None and manifest_path.is_file():
             config = read_json(manifest_path)["config"]
         scanner = SceneContentDiscovery(
             self.media, FFmpegFrameSampler(self.config.ffmpeg_bin),
             DiscoveryConfig(**(config or {})),
         )
+        started = time.perf_counter()
         result = scanner.scan(
             source=Path(source.path), fingerprint=source.fingerprint,
             duration=info.duration, visual_dir=self.task_dir(task_id) / "visual",
             budget_seconds=budget_seconds,
         )
+        elapsed = time.perf_counter() - started
         if "visual_discovery" not in state.artifacts:
             self.tasks.register_artifact(
                 task_id, "visual_discovery",
                 Artifact(kind="visual_discovery", path=result["artifact_path"]),
             )
         result["unresolved_count"] = len(self.tasks.get(task_id).unresolved)
+        result["elapsed_seconds"] = round(elapsed, 3)
+        result["reused"] = reused
+        result["remaining_duration"] = round(
+            max(0.0, float(result["total_duration"]) - float(result["scanned_duration"])), 3
+        )
         return result
+
+    def clean_visual_candidates(
+        self,
+        task_id: str,
+        *,
+        start: int = 0,
+        limit: int = 20,
+    ) -> dict[str, Any]:
+        if start < 0 or not 1 <= limit <= 50:
+            raise ValueError("start must be nonnegative and limit must be between 1 and 50")
+        page = self.get_visual_candidates(task_id, start=start, limit=limit)
+        started = time.perf_counter()
+        counts = {"clean": 0, "resolved": 0, "unresolved": 0}
+        resolved: list[dict[str, Any]] = []
+        unresolved: list[dict[str, Any]] = []
+        reused_count = 0
+        for item in page["candidates"]:
+            candidate_id = str(item["candidate_id"])
+            record_path = self.task_dir(task_id) / "visual" / "cleanup" / f"{candidate_id}.json"
+            if record_path.is_file():
+                reused_count += 1
+            result = self.clean_visual_candidate(task_id, candidate_id)
+            status = str(result["status"])
+            counts[status] = counts.get(status, 0) + 1
+            if status == "resolved":
+                resolved.append({
+                    "candidate_id": candidate_id,
+                    "output_path": result.get("output_path"),
+                    "replacement_timestamp": result.get("replacement_timestamp"),
+                })
+            elif status == "unresolved":
+                unresolved.append({
+                    "candidate_id": candidate_id,
+                    "reason": result.get("unresolved_reason"),
+                })
+        processed = len(page["candidates"])
+        next_start = start + processed
+        return {
+            "total": page["total"],
+            "start": start,
+            "processed": processed,
+            "has_more": next_start < page["total"],
+            "next_start": next_start if next_start < page["total"] else None,
+            "counts": counts,
+            "reused_count": reused_count,
+            "resolved": resolved,
+            "unresolved": unresolved,
+            "elapsed_seconds": round(time.perf_counter() - started, 3),
+        }
 
     def get_visual_candidates(self, task_id: str, *, start: int = 0,
                               limit: int = 20) -> dict[str, Any]:

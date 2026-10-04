@@ -124,7 +124,7 @@ class McpToolFacade:
     def task_context(self, task_id: str) -> dict[str, Any]:
         return self.application.get_task_context(task_id)
 
-    def discover_visuals(self, task_id: str, budget_seconds: float = 120.0,
+    def discover_visuals(self, task_id: str, budget_seconds: float = 600.0,
                          config: dict[str, Any] | None = None) -> dict[str, Any]:
         return self.application.discover_visuals(
             task_id, budget_seconds=budget_seconds, config=config,
@@ -133,6 +133,18 @@ class McpToolFacade:
     def get_visual_candidates(self, task_id: str, start: int = 0,
                               limit: int = 20) -> dict[str, Any]:
         return self.application.get_visual_candidates(task_id, start=start, limit=limit)
+
+    def clean_visual_candidates(
+        self,
+        task_id: str,
+        start: int = 0,
+        limit: int = 20,
+    ) -> dict[str, Any]:
+        return self.application.clean_visual_candidates(
+            task_id,
+            start=start,
+            limit=limit,
+        )
 
     def clean_visual_candidate(self, task_id: str, candidate_id: str) -> dict[str, Any]:
         return self.application.clean_visual_candidate(task_id, candidate_id)

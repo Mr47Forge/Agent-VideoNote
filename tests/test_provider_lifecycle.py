@@ -107,6 +107,8 @@ def test_primary_releases_after_persistence_review_reuses_until_stage_release(tm
 
     summary = app.transcribe(task_id)
     assert summary["segments"] == 1
+    assert summary["reused"] is False
+    assert summary["elapsed_seconds"] >= 0
     assert Path(summary["path"]).is_file()
     assert summary["task"]["current_stage"] == "visual"
     assert summary["task"]["context_key"].startswith("visual:")
