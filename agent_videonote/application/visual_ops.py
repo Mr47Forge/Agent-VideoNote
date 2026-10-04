@@ -35,13 +35,19 @@ class VisualOperationsMixin:
         source = SourceIdentity.from_path(state.source.path)
         if source.fingerprint != state.source.fingerprint:
             raise ValueError("source video changed after task preparation")
-        info = self.media.probe(source.path)
-        if info.duration is None:
+        media_artifact = state.artifacts.get("media_info")
+        if media_artifact and Path(media_artifact["path"]).is_file():
+            duration = read_json(media_artifact["path"]).get("duration")
+        else:
+            duration = self.media.probe(source.path).duration
+        if duration is None:
             raise ValueError("video duration is unavailable")
         manifest_path = self.task_dir(task_id) / "visual" / "discovery" / "progress.json"
-        reused = manifest_path.is_file()
-        if config is None and manifest_path.is_file():
-            config = read_json(manifest_path)["config"]
+        previous_progress = read_json(manifest_path) if manifest_path.is_file() else None
+        previous_scanned = (float(previous_progress["scanned_until"])
+                            if previous_progress else None)
+        if config is None and previous_progress:
+            config = previous_progress["config"]
         scanner = SceneContentDiscovery(
             self.media, FFmpegFrameSampler(self.config.ffmpeg_bin),
             DiscoveryConfig(**(config or {})),
@@ -49,7 +55,7 @@ class VisualOperationsMixin:
         started = time.perf_counter()
         result = scanner.scan(
             source=Path(source.path), fingerprint=source.fingerprint,
-            duration=info.duration, visual_dir=self.task_dir(task_id) / "visual",
+            duration=float(duration), visual_dir=self.task_dir(task_id) / "visual",
             budget_seconds=budget_seconds,
         )
         elapsed = time.perf_counter() - started
@@ -60,7 +66,8 @@ class VisualOperationsMixin:
             )
         result["unresolved_count"] = len(self.tasks.get(task_id).unresolved)
         result["elapsed_seconds"] = round(elapsed, 3)
-        result["reused"] = reused
+        result["reused"] = (previous_scanned is not None
+                            and result["scanned_duration"] <= previous_scanned + 0.001)
         result["remaining_duration"] = round(
             max(0.0, float(result["total_duration"]) - float(result["scanned_duration"])), 3
         )
@@ -140,8 +147,7 @@ class VisualOperationsMixin:
         source = SourceIdentity.from_path(state.source.path)
         manifest = read_json(manifest_path)
         if (source.fingerprint != state.source.fingerprint
-                or manifest.get("source_fingerprint") != source.fingerprint
-                or Path(manifest.get("source_path", "")).resolve() != Path(source.path)):
+                or manifest.get("source_fingerprint") != source.fingerprint):
             raise ValueError("visual candidate source does not match the current task")
         if not manifest.get("complete"):
             raise InvalidTransitionError(
@@ -156,7 +162,6 @@ class VisualOperationsMixin:
         provenance = candidate.get("source_frame", {})
         duration = float(manifest["duration"])
         if (image_path.parent != task_dir / "visual" / "candidates"
-                or Path(provenance.get("video", "")).resolve() != Path(source.path)
                 or abs(float(provenance.get("timestamp", -1)) - timestamp) > 0.001
                 or not math.isfinite(timestamp) or not 0 <= timestamp < duration):
             raise ValueError("visual candidate provenance does not match the current task")
@@ -267,8 +272,7 @@ class VisualOperationsMixin:
         source = SourceIdentity.from_path(state.source.path)
         manifest = read_json(manifest_path)
         if (source.fingerprint != state.source.fingerprint
-                or manifest.get("source_fingerprint") != source.fingerprint
-                or Path(manifest.get("source_path", "")).resolve() != Path(source.path)):
+                or manifest.get("source_fingerprint") != source.fingerprint):
             raise ValueError("visual candidate source does not match the current task")
         if not manifest.get("complete"):
             raise InvalidTransitionError(
@@ -287,7 +291,6 @@ class VisualOperationsMixin:
         duration = float(manifest["duration"])
         provenance = candidate.get("source_frame", {})
         if (image_path.parent != task_dir / "visual" / "candidates"
-                or Path(provenance.get("video", "")).resolve() != Path(source.path)
                 or abs(float(provenance.get("timestamp", -1)) - timestamp) > 0.001
                 or not math.isfinite(timestamp) or not 0 <= timestamp < duration):
             raise ValueError("visual candidate provenance does not match the current task")
@@ -317,7 +320,7 @@ class VisualOperationsMixin:
                 return _repair_summary(record)
 
         output_path = task_dir / "visual" / "repaired" / (
-            f"{key}{image_path.suffix.lower() or '.jpg'}"
+            f"{key}.png"
         )
         temp_dir = task_dir / "temp" / "visual_repair" / key
         nearby: list[str] = []
@@ -449,6 +452,7 @@ def _repair_request_key(
     payload = json.dumps(
         {
             "provider": provider,
+            "output_contract": "masked-png-v1",
             "mask_sha256": mask_sha256,
             "window_seconds": window_seconds,
             "interval": interval,

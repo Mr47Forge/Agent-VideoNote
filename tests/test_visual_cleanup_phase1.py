@@ -275,6 +275,26 @@ def test_clean_is_persistent_and_never_added_to_unresolved(tmp_path, monkeypatch
                 if x["category"] == "visual_cleanup"]
 
 
+def test_cleanup_cache_survives_same_content_relocation(tmp_path, monkeypatch):
+    clean = page()
+    frames = {second: clean for second in range(11)}
+    app, _ = build_app(tmp_path, frames)
+    task_id, _, _, _ = prepared_task(app, tmp_path, frames)
+    sampler = FakeSampler(frames)
+    monkeypatch.setattr("agent_videonote.application.visual_ops.FFmpegFrameSampler",
+                        lambda _bin: sampler)
+    first = app.clean_visual_candidate(task_id, "vc-0001")
+    calls = list(sampler.calls)
+    relocated = tmp_path / "relocated.mp4"
+    relocated.write_bytes((tmp_path / "source.mp4").read_bytes())
+    prepared = app.prepare(relocated)
+    assert prepared["task"]["task_id"] == task_id
+    assert prepared["media"]["path"] == str(relocated.resolve())
+    assert read_json(app.task_dir(task_id) / "source" / "media.json")["path"] == str(relocated.resolve())
+    assert app.clean_visual_candidate(task_id, "vc-0001") == first
+    assert sampler.calls == calls
+
+
 def test_evidenced_unresolved_is_persistent_and_not_duplicated(tmp_path, monkeypatch):
     clean = page()
     frames = {second: overlay(clean) if second == 5 else clean for second in range(11)}
@@ -452,6 +472,9 @@ def test_explicit_masked_repair_is_persisted_and_idempotent(tmp_path):
         provider="fake-mask",
         mask_path=str(mask),
     )
+    relocated = tmp_path / "relocated.mp4"
+    relocated.write_bytes((tmp_path / "source.mp4").read_bytes())
+    assert app.prepare(relocated)["task"]["task_id"] == task_id
     second = app.repair_visual_candidate(
         task_id,
         "vc-0001",
@@ -462,6 +485,7 @@ def test_explicit_masked_repair_is_persisted_and_idempotent(tmp_path):
     assert first == second
     assert first["status"] == "resolved"
     assert first["provider"] == "fake-mask"
+    assert Path(first["output_path"]).suffix == ".png"
     assert Path(first["output_path"]).read_bytes() == image.read_bytes()
     assert len(strategy.calls) == 1
     assert app.tasks.get(task_id).artifacts["visual_repairs"]["path"].endswith(
@@ -659,3 +683,25 @@ def test_gpu_visual_repair_releases_resident_asr_provider_first(tmp_path):
     assert resident.closes == 1
     assert app.asr_registry.loaded_providers() == []
     assert len(strategy.calls) == 1
+
+
+def test_masked_png_preserves_outside_pixels_and_invalidates_legacy_key(tmp_path):
+    import hashlib
+    import json
+    import numpy as np
+    from PIL import Image
+    from agent_videonote.application.visual_ops import _repair_request_key
+    from agent_videonote.visuals.cleanup.providers._vsr_bridge import _composite_masked
+
+    original = np.arange(12 * 12 * 3, dtype=np.uint8).reshape(12, 12, 3)
+    mask = np.zeros((12, 12), dtype=np.uint8)
+    mask[3:6, 3:6] = 255
+    generated = np.full_like(original, 100)
+    output = tmp_path / "repaired.png"
+    Image.fromarray(_composite_masked(original, generated, mask)).save(output)
+    restored = np.asarray(Image.open(output))
+    assert np.array_equal(restored[mask == 0], original[mask == 0])
+    assert np.array_equal(restored[mask > 0], generated[mask > 0])
+    params = dict(provider="vsr-lama", mask_sha256="mask", window_seconds=None, interval=None)
+    legacy = hashlib.sha256(json.dumps(params, sort_keys=True, separators=(",", ":")).encode()).hexdigest()[:16]
+    assert _repair_request_key(**params) != legacy

@@ -209,6 +209,15 @@ class SceneContentDiscovery:
                 (end - start) / self.config.sampling_interval
             )
             if not samples:
+                # A container's audio duration can extend slightly beyond its
+                # final video frame. Do not strand an otherwise complete scan
+                # on that tiny, frame-free tail.
+                if (start > 0 and end >= duration - 0.001
+                        and end - start <= min(0.25, self.config.sampling_interval / 4)):
+                    progress["scanned_until"] = round(duration, 3)
+                    progress["complete"] = True
+                    write_json_atomic(manifest_path, progress)
+                    break
                 raise RuntimeError(
                     f"visual sampling returned no frames for "
                     f"{start:.3f}-{end:.3f}; checkpoint was not advanced"

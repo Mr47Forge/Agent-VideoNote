@@ -29,6 +29,9 @@ class TaskOperationsMixin:
 
         if existing and Path(existing["path"]).is_file():
             media_payload = read_json(existing["path"])
+            if media_payload.get("path") != state.source.path:
+                media_payload["path"] = state.source.path
+                write_json_atomic(Path(existing["path"]), media_payload)
             if state.current_stage == WorkflowStage.INPUT.value:
                 state = self.workflow.complete_current(
                     state.task_id,

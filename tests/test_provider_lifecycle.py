@@ -48,11 +48,24 @@ class FakeGpuProvider:
 
 class FailingGpuProvider(FakeGpuProvider):
     def transcribe(self, request: TranscriptionRequest) -> Transcript:
-        if not self.is_loaded:
-            self.loads += 1
-            self.is_loaded = True
+        class Model:
+            pass
+        self.model = Model()
+        self.is_loaded = True
+        self.loads += 1
         self.calls += 1
+        model = self.model  # Mimic provider and upstream inference frame locals.
+        assert model is self.model
         raise RuntimeError("simulated ASR failure")
+
+    def close(self) -> None:
+        import gc
+        import weakref
+        reference = weakref.ref(self.model)
+        self.model = None
+        gc.collect()
+        assert reference() is None, "traceback retained model during release"
+        super().close()
 
 
 class FakeMedia:

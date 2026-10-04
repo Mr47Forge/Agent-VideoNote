@@ -124,7 +124,9 @@ def _lama(args) -> None:
     result = runner.inpaint(image, mask)
     inferred = time.perf_counter()
     args.output.parent.mkdir(parents=True, exist_ok=True)
-    Image.fromarray(result).save(args.output)
+    import numpy as np
+    protected = _composite_masked(np.asarray(image), result, np.asarray(mask))
+    Image.fromarray(protected).save(args.output)
     del runner
     _emit_metrics("lama", start, loaded, inferred, before, after_load)
 

@@ -360,6 +360,7 @@ def test_application_discovery_preserves_transcript_and_task_stage(tmp_path, mon
 
     class AppMedia(FakeMedia):
         def probe(self, source):
+            self.probe_count = getattr(self, "probe_count", 0) + 1
             return MediaInfo(path=str(source), duration=12.0, format_name="fake", streams=())
 
     root = tmp_path / "data"
@@ -368,9 +369,10 @@ def test_application_discovery_preserves_transcript_and_task_stage(tmp_path, mon
     store = JsonTaskStore(paths.tasks)
     tasks = TaskService(store)
     workflow = WorkflowEngine(store)
+    media = AppMedia()
     app = ApplicationService(
         config=RuntimeConfig(paths=paths), tasks=tasks, workflow=workflow,
-        media=AppMedia(), asr_registry=ProviderRegistry(),
+        media=media, asr_registry=ProviderRegistry(),
         asr_profile=AsrProfile(roles={"primary": None, "review": None}),
         contexts=CourseContextRepository(paths.context / "courses"),
     )
@@ -385,9 +387,15 @@ def test_application_discovery_preserves_transcript_and_task_stage(tmp_path, mon
     monkeypatch.setattr(visual_ops, "FFmpegFrameSampler",
                         lambda _bin: FakeSampler([A, A, A, B, B, B]))
 
-    result = app.discover_visuals(task_id)
+    first = app.discover_visuals(task_id, budget_seconds=10)
+    assert first["complete"] is False
+    assert first["reused"] is False
+    result = app.discover_visuals(task_id, budget_seconds=10)
 
     assert result["complete"]
+    assert result["reused"] is False
+    assert app.discover_visuals(task_id, budget_seconds=10)["reused"] is True
+    assert media.probe_count == 1
     assert tasks.get(task_id).current_stage == "visual"
     assert tasks.get(task_id).completed_stages == ["input", "transcript"]
     assert transcript_path.read_bytes() == b'{"text":"keep"}'
@@ -432,6 +440,21 @@ def test_empty_sampling_chunk_does_not_advance_checkpoint(tmp_path):
     progress = read_json(manifest)
     assert progress["scanned_until"] == 10.0
     assert progress["complete"] is False
+    assert sampler.starts == [0.0, 10.0]
+
+
+def test_frame_free_subsecond_tail_can_complete_after_checkpoint(tmp_path):
+    sampler = FakeSampler([A] * 5)
+    scanner = SceneContentDiscovery(FakeMedia(), sampler, DiscoveryConfig(chunk_seconds=10))
+    args = {"source": tmp_path / "source.mp4", "fingerprint": "source-v1",
+            "duration": 10.083, "visual_dir": tmp_path / "visual",
+            "budget_seconds": 10}
+    first = scanner.scan(**args)
+    assert first["scanned_duration"] == 10.0
+    assert first["complete"] is False
+    second = scanner.scan(**args)
+    assert second["complete"] is True
+    assert second["scanned_duration"] == 10.083
     assert sampler.starts == [0.0, 10.0]
 
 

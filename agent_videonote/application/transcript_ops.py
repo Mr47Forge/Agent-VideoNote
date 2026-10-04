@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import time
+import traceback
 from contextlib import nullcontext
 from pathlib import Path
 from typing import Any
@@ -246,6 +247,10 @@ class TranscriptOperationsMixin:
                     time.perf_counter() - started, 3
                 )
                 return summary
+            except BaseException as error:
+                # Finished inference frames can retain the GPU model through locals.
+                traceback.clear_frames(error.__traceback__)
+                raise
             finally:
                 self.asr_registry.release_provider(provider_id)
 
@@ -407,7 +412,8 @@ class TranscriptOperationsMixin:
                     raise CapabilityError(
                         "invalid review transcript: " + "; ".join(problems)
                     )
-            except Exception:
+            except BaseException as error:
+                traceback.clear_frames(error.__traceback__)
                 self.asr_registry.release_provider(provider_id)
                 raise
         result = transcript.to_dict()
